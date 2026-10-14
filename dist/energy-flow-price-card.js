@@ -1849,12 +1849,34 @@ class EnergyFlowPriceCard extends i {
     const startMs = axisStart.getTime();
     const endMs = startMs + hours * 3600000;
 
-    // slot length from data (default hourly)
-    const stepMs = allPoints.length > 1 ? (allPoints[1].t - allPoints[0].t) : 3600000;
+    // Slot length: the SMALLEST gap between any two consecutive points, not just the
+    // first one. Some providers (e.g. Frank Energie) mix hourly slots for "today" with
+    // 15-minute slots for "tomorrow" in the same array — picking only the first gap
+    // would misjudge the whole 48h axis as hourly and silently drop 3 out of 4
+    // quarter-hour values. Gaps under a minute are ignored as noise/duplicates.
+    let stepMs = 3600000;
+    if (allPoints.length > 1) {
+      let minGap = Infinity;
+      for (let i = 1; i < allPoints.length; i++) {
+        const gap = allPoints[i].t - allPoints[i - 1].t;
+        if (gap >= 60000 && gap < minGap) minGap = gap;
+      }
+      if (minGap !== Infinity) stepMs = minGap;
+    }
     const slotCount = Math.max(1, Math.round((endMs - startMs) / stepMs));
 
-    // Build fixed slots; fill with data where available
-    const byTime = new Map(allPoints.map((p) => [Math.floor(p.t / stepMs) * stepMs, p.v]));
+    // Build fixed slots; fill with data where available. A coarser point (e.g. an
+    // hourly price) forward-fills every finer bucket within its own span, not just its
+    // exact starting instant, so it still covers all its quarter-hours correctly.
+    const byTime = new Map();
+    for (let i = 0; i < allPoints.length; i++) {
+      const p = allPoints[i];
+      const next = allPoints[i + 1];
+      const spanEnd = next ? next.t : p.t + stepMs;
+      for (let t = p.t; t < spanEnd; t += stepMs) {
+        byTime.set(Math.floor(t / stepMs) * stepMs, p.v);
+      }
+    }
     const slots = [];
     for (let i = 0; i < slotCount; i++) {
       const t = startMs + i * stepMs;
@@ -2188,7 +2210,7 @@ class EnergyFlowPriceCard extends i {
 
 customElements.define("energy-flow-price-card", EnergyFlowPriceCard);
 
-console.info("%c energy-flow-price-card %c v1.12.1 ", "background:#7dd3fc;color:#0a1420;font-weight:700", "background:#333;color:#fff");
+console.info("%c energy-flow-price-card %c v1.12.2 ", "background:#7dd3fc;color:#0a1420;font-weight:700", "background:#333;color:#fff");
 
 window.customCards = window.customCards || [];
 window.customCards.push({
