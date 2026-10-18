@@ -2779,19 +2779,23 @@ class EnergyFlowPriceCard extends LitElement {
       return;
     }
     const use = ids && ids.length ? ids : Object.keys(data);
+    // Like the energy dashboard: collect everything into whole-hour buckets. Some forecasts
+    // (e.g. Forecast.Solar) also contain odd timestamps such as sunrise/sunset (07:43),
+    // which must not be mistaken for a shorter time step.
+    const HOUR = 3600000;
     const sum = new Map();
     for (const id of use) {
       for (const [k, wh] of Object.entries(data[id]?.wh_hours || {})) {
         const t = Date.parse(k);
-        if (!isNaN(t)) sum.set(t, (sum.get(t) || 0) + (+wh || 0));
+        if (isNaN(t)) continue;
+        const h = Math.floor(t / HOUR) * HOUR;
+        sum.set(h, (sum.get(h) || 0) + (+wh || 0));
       }
     }
     const ts = [...sum.keys()].sort((a, b) => a - b);
-    let step = 3600000;
-    for (let i = 1; i < ts.length; i++) { const gap = ts[i] - ts[i - 1]; if (gap >= 60000 && gap < step) step = gap; }
-    // Wh per slot -> average power (W) drawn at the middle of the slot
-    const points = ts.map((t) => ({ t, wh: sum.get(t), v: sum.get(t) / (step / 3600000) }));
-    this._fc = { busy: false, fetched: Date.now(), points, step };
+    // Wh per hour == average power in W for that hour, drawn at the middle of the hour
+    const points = ts.map((t) => ({ t, wh: sum.get(t), v: sum.get(t) }));
+    this._fc = { busy: false, fetched: Date.now(), points, step: HOUR };
     this.requestUpdate();
   }
 
@@ -3607,7 +3611,7 @@ class EnergyFlowPriceCard extends LitElement {
 
 customElements.define("energy-flow-price-card", EnergyFlowPriceCard);
 
-console.info("%c energy-flow-price-card %c v1.19.0-fork ", "background:#7dd3fc;color:#0a1420;font-weight:700", "background:#333;color:#fff");
+console.info("%c energy-flow-price-card %c v1.19.1-fork ", "background:#7dd3fc;color:#0a1420;font-weight:700", "background:#333;color:#fff");
 
 window.customCards = window.customCards || [];
 window.customCards.push({
