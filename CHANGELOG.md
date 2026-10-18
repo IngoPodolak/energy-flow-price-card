@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.20.0-fork
+
+- Preisdiagramm: Skala passt sich der Preisspanne an (unterer leerer Bereich wird abgeschnitten, runde Teilstriche). Negative Preise werden unterstützt: Null-Linie, Balken zeigen nach unten. Abschaltbar (`price_axis_auto: false`).
+
 ## v1.19.2-fork
 
 - Prognose-Quelle pro Karte wählbar, wenn im Energie-Dashboard mehrere Solaranlagen mit Prognose eingetragen sind (`solar_forecast_entries`).

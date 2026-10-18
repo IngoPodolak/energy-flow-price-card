@@ -113,6 +113,7 @@ export const DEFAULTS = {
   energy_battery_mode: "dual",
   solar_forecast: true,     // solar forecast from the HA energy dashboard (Forecast.Solar, Solcast …), if configured there
   solar_forecast_node: true, // also show today's forecast kWh under the solar node
+  price_axis_auto: true,    // price chart: axis starts just below the lowest price (negative prices supported)
   price_show_minmax: false, // mark each day's highest / lowest price in the price chart
   // "Usage" tab: last-hour power (W) breakdown by source (solar/battery/grid). Reuses the
   // solar_power/battery_charge_power/battery_discharge_power/grid_power entities already

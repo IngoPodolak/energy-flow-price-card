@@ -35,6 +35,7 @@ flow_min_power: 5              # W: darunter wird die Linie ausgeblendet
 car_mode: row                  # row = alle Geräte gleichzeitig | scroll | merged
 color_day_in: "#34d399"        # Tageswert ins Haus
 color_day_out: "#fb923c"       # Tageswert aus dem Haus
+price_axis_auto: true          # Preisachse an Preisspanne anpassen (auch negativ)
 price_show_minmax: true        # Tageshöchst-/-tiefstpreis im Preisdiagramm
 show_daily_energy: true
 solar_forecast: true           # Prognose aus dem Energie-Dashboard im Solar-Diagramm

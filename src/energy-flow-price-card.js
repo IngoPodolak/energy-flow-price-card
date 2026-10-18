@@ -162,6 +162,34 @@ function subPathD(pts, dStart, dEnd) {
   return all.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(2)},${p.y.toFixed(2)}`).join(" ");
 }
 
+// Y-axis for the price chart. auto=true: tight range around the actual prices with round
+// steps (lower edge just below the lowest price, negative prices included); auto=false:
+// the classic axis from 0 (or from the lowest negative price) up to the maximum.
+function priceScale(vals, auto, roomTop) {
+  let min = vals.length ? Math.min(...vals) : 0;
+  let max = vals.length ? Math.max(...vals) : 0.4;
+  if (!vals.length) { min = 0; max = 0.4; }
+  const nice = [0.001, 0.002, 0.0025, 0.005, 0.01, 0.02, 0.025, 0.05, 0.1, 0.2, 0.25, 0.5, 1, 2, 5];
+  let lo, hi;
+  if (auto) {
+    const span = Math.max(max - min, Math.abs(max) * 0.1, 0.01);
+    lo = min - span * 0.12;
+    hi = max + span * (roomTop ? 0.3 : 0.1);
+    if (min >= 0 && lo < 0) lo = 0;
+  } else {
+    lo = Math.min(0, min * 1.1);
+    hi = Math.max(max, 0.1) * (roomTop ? 1.22 : 1.1);
+  }
+  const step = nice.find((n) => (hi - lo) / n <= 5) || 5;
+  lo = Math.floor(lo / step + 1e-9) * step;
+  hi = Math.ceil(hi / step - 1e-9) * step;
+  if (hi - lo < step) hi = lo + step;
+  const ticks = [];
+  for (let v = hi; v >= lo - step / 2; v -= step) ticks.push(Math.abs(v) < step / 1000 ? 0 : v);
+  const dec = step >= 0.1 ? (step >= 1 ? 0 : (step * 10) % 1 === 0 ? 1 : 2) : step >= 0.01 ? 2 : 3;
+  return { lo, hi, ticks, dec: Math.max(dec, 2), fr: (v) => (v - lo) / (hi - lo) };
+}
+
 // Reduce a dense history series to at most ~n points (bucket averages).
 function downsample(pts, start, end, n) {
   if (pts.length <= n * 1.5) return pts;
@@ -1829,7 +1857,7 @@ class EnergyFlowPriceCard extends LitElement {
 
     const withData = slots.filter((s) => s.v !== null);
     const showMinMax = !!c.price_show_minmax;
-    const maxV = withData.length ? Math.max(...withData.map((s) => s.v), 0.1) * (showMinMax ? 1.22 : 1.1) : 0.4;
+    const sc = priceScale(withData.map((s) => s.v), c.price_axis_auto !== false, showMinMax);
     // Daily highest / lowest price within the visible window (only for days with enough data).
     const minMax = [];
     if (showMinMax) {
@@ -1858,7 +1886,7 @@ class EnergyFlowPriceCard extends LitElement {
       labels.push({ frac: h / hours, text: d.getHours() + ":00" });
     }
 
-    const yTicks = [1, 0.75, 0.5, 0.25, 0].map((f) => (maxV * f).toFixed(2).replace(".", ","));
+    const yTicks = sc.ticks.map((v) => v.toFixed(sc.dec).replace(".", ","));
 
     const sel = this._selectedSlot;
     const profile = this._activeProfile();
@@ -1918,13 +1946,14 @@ class EnergyFlowPriceCard extends LitElement {
         <div class="yaxis">${yTicks.map((t) => html`<span>${t}</span>`)}</div>
         <div class="plot">
           ${profile.chart_style === "bars"
-            ? this._priceBarsBody(slots, maxV, stops, sel, profile)
-            : this._priceLineBody(slots, maxV, profile, sel)}
+            ? this._priceBarsBody(slots, sc, stops, sel, profile)
+            : this._priceLineBody(slots, sc, profile, sel)}
+          ${sc.lo < 0 && sc.hi > 0 ? html`<div class="zeroline" style="bottom:${sc.fr(0) * 100}%"></div>` : nothing}
           ${dayMarkers.map((d) => html`<div class="daymarker" data-label="${d.text}" style="left:${d.frac * 100}%"></div>`)}
           ${minMax.map((m) => {
             const sl = slots[m.i];
             const x = profile.chart_style === "bars" ? ((m.i + 0.5) / slots.length) * 100 : (m.i / Math.max(1, slots.length - 1)) * 100;
-            const y = Math.max(0, Math.min(100, (sl.v / maxV) * 100));
+            const y = Math.max(0, Math.min(100, sc.fr(sl.v) * 100));
             return html`<div class="pmark ${m.kind}" style="left:${x}%;bottom:${y}%"><span>${m.kind === "max" ? "▲" : "▼"} ${sl.v.toFixed(2).replace(".", ",")}</span></div>`;
           })}
           <div class="nowline" data-now="${this._t("now")}" style="left:${nowFrac * 100}%"></div>
@@ -1948,20 +1977,26 @@ class EnergyFlowPriceCard extends LitElement {
     `;
   }
 
-  _priceBarsBody(slots, maxV, stops, sel, profile) {
+  _priceBarsBody(slots, sc, stops, sel, profile) {
     const GREY = "#6b7280";
     const radiusStyle = profile?.bar_radius ? `;border-radius:${profile.bar_radius}` : "";
+    // Bars grow from the zero line (or from the bottom when the axis doesn't reach 0),
+    // so negative prices point downwards.
+    const base = Math.max(sc.lo, Math.min(sc.hi, 0));
+    const geo = (v) => {
+      const a = sc.fr(Math.max(v, base)), b = sc.fr(Math.min(v, base));
+      return `bottom:${(b * 100).toFixed(2)}%;height:${Math.max(1.5, (a - b) * 100).toFixed(2)}%`;
+    };
     return html`
       <div class="bars">
         ${slots.map((s) => {
           if (s.v === null) {
             if (profile?.grey_unknown_value != null) {
-              const h = Math.max(2, Math.min(100, (profile.grey_unknown_value / maxV) * 100));
-              return html`<div class="bar unknown" style="height:${h}%;background:${GREY}${radiusStyle}"></div>`;
+              const uv = Math.max(sc.lo, Math.min(sc.hi, profile.grey_unknown_value));
+              return html`<div class="bcol"><div class="bar unknown" style="${geo(uv)};background:${GREY}${radiusStyle}"></div></div>`;
             }
-            return html`<div class="bar empty-slot"></div>`;
+            return html`<div class="bcol"><div class="bar empty-slot"></div></div>`;
           }
-          const h = Math.max(2, (s.v / maxV) * 100);
           let col;
           if (profile?.highlight_now) {
             // Not price-based: a flat bar color, except the bar for the current hour.
@@ -1973,14 +2008,14 @@ class EnergyFlowPriceCard extends LitElement {
           }
           const isSel = sel && sel.t === s.t;
           const timeTxt = new Date(s.t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-          return html`<div
-            class="bar ${isSel ? "sel" : ""}"
-            style="height:${h}%;background:${col}${radiusStyle}"
+          return html`<div class="bcol"><div
+            class="bar ${isSel ? "sel" : ""} ${s.v < 0 ? "neg" : ""}"
+            style="${geo(s.v)};background:${col}${radiusStyle}"
             title="${timeTxt} — ${s.v.toFixed(3).replace(".", ",")} €/kWh"
             @mouseenter=${() => this._hoverSlot(s)}
             @mouseleave=${() => this._hoverSlot(null)}
             @click=${() => this._tapSlot(s)}
-          ></div>`;
+          ></div></div>`;
         })}
       </div>
     `;
@@ -1989,7 +2024,7 @@ class EnergyFlowPriceCard extends LitElement {
   // Smooth-line layout profiles ("line" / "line-threshold"): only the leading
   // contiguous run of known values is drawn as a curve; a trailing gap (e.g.
   // tomorrow's prices not published yet) keeps the familiar hatched placeholder.
-  _priceLineBody(slots, maxV, profile, sel) {
+  _priceLineBody(slots, sc, profile, sel) {
     let runEnd = 0;
     while (runEnd < slots.length && slots[runEnd].v !== null) runEnd++;
     const run = slots.slice(0, runEnd);
@@ -1997,12 +2032,13 @@ class EnergyFlowPriceCard extends LitElement {
     const n = Math.max(1, slots.length - 1);
     const pts = run.map((s, i) => ({
       x: (i / n) * 100,
-      y: 100 - Math.max(0, Math.min(100, (s.v / maxV) * 100)),
+      y: 100 - Math.max(0, Math.min(100, sc.fr(s.v) * 100)),
     }));
 
     const pathD = pts.length ? catmullRomToBezierPath(pts) : "";
+    const yBase = (100 - sc.fr(Math.max(sc.lo, Math.min(sc.hi, 0))) * 100).toFixed(2);
     const areaD = pathD && pts.length > 1
-      ? `${pathD} L${pts[pts.length - 1].x.toFixed(2)},100 L${pts[0].x.toFixed(2)},100 Z`
+      ? `${pathD} L${pts[pts.length - 1].x.toFixed(2)},${yBase} L${pts[0].x.toFixed(2)},${yBase} Z`
       : "";
 
     let stroke = profile.line_color || "#7dd3fc";
@@ -2011,7 +2047,7 @@ class EnergyFlowPriceCard extends LitElement {
 
     if (profile.chart_style === "line-threshold" && run.length) {
       const avg = run.reduce((a, s) => a + s.v, 0) / run.length;
-      const avgFrac = Math.max(0, Math.min(1, 1 - Math.min(1, avg / maxV)));
+      const avgFrac = Math.max(0, Math.min(1, 1 - sc.fr(avg)));
       // Soft band around the average instead of a hard cut, for a smooth orange->teal blend.
       const band = 0.14;
       const topOff = Math.max(0, avgFrac - band / 2);
@@ -2196,12 +2232,14 @@ class EnergyFlowPriceCard extends LitElement {
       .chart.has-rel .yaxis { bottom: 48px; }
       .plot { position: absolute; left: 34px; right: 0; top: 0; bottom: 34px; }
       .chart.has-rel .plot { bottom: 48px; }
-      .bars { position: absolute; inset: 0; display: flex; align-items: flex-end; gap: 1px; }
-      .bar { flex: 1; border-radius: 0; cursor: pointer; transition: opacity .15s; }
+      .bars { position: absolute; inset: 0; display: flex; align-items: stretch; gap: 1px; }
+      .bcol { flex: 1; position: relative; min-width: 0; }
+      .bar { position: absolute; left: 0; right: 0; border-radius: 0; cursor: pointer; transition: opacity .15s; }
+      .zeroline { position: absolute; left: 0; right: 0; height: 0; border-top: 1px solid rgba(255,255,255,.35); pointer-events: none; }
       .bar:hover { opacity: .8; }
       .bar.sel { outline: 1.5px solid var(--primary-text-color); outline-offset: -1px; }
       .chdr .now.sel b { color: var(--primary-color); }
-      .bar.empty-slot { background: repeating-linear-gradient(45deg, rgba(255,255,255,.03), rgba(255,255,255,.03) 3px, transparent 3px, transparent 6px); height: 100%; border-radius: 0; align-self: stretch; }
+      .bar.empty-slot { background: repeating-linear-gradient(45deg, rgba(255,255,255,.03), rgba(255,255,255,.03) 3px, transparent 3px, transparent 6px); top: 0; bottom: 0; border-radius: 0; }
       .bar.unknown { cursor: default; opacity: .55; }
       .bar.unknown:hover { opacity: .55; }
       .priceline { position: absolute; inset: 0; width: 100%; height: 100%; }
@@ -2239,8 +2277,8 @@ class EnergyFlowPriceCard extends LitElement {
 
 customElements.define("energy-flow-price-card", EnergyFlowPriceCard);
 
-window.__EFPC_VERSION = "1.19.2-fork";
-console.info("%c energy-flow-price-card %c v1.19.2-fork ", "background:#7dd3fc;color:#0a1420;font-weight:700", "background:#333;color:#fff");
+window.__EFPC_VERSION = "1.20.0-fork";
+console.info("%c energy-flow-price-card %c v1.20.0-fork ", "background:#7dd3fc;color:#0a1420;font-weight:700", "background:#333;color:#fff");
 
 window.customCards = window.customCards || [];
 window.customCards.push({
