@@ -62,7 +62,7 @@ export const DEFAULTS = {
   price_hours: 24,
   price_start: "midnight", // "now" | "midnight"
   price_lookback_hours: 2, // 1-12: how far back the axis starts when price_start is "now"
-  car_mode: "scroll",       // "scroll" | "merged"
+  car_mode: "row",          // "row" (all devices at once) | "scroll" | "merged"
   car_scroll_interval: 5,   // seconds
   language: "auto",         // "auto" | "nl" | "en" | "de"
   flow_speed: 1.0,          // overall speed multiplier for the flowing dashes
@@ -98,6 +98,10 @@ export const DEFAULTS = {
   tap_action: "graph",      // "graph" | "more-info" | "none"
   hold_action: "more-info", // "graph" | "more-info" | "none"
   color_grid_export: "#22c55e", // grid chart: area color for export (below zero)
+  flow_min_power: 5,        // W: below this a branch counts as idle (line hidden; idle devices hidden unless display_zero)
+  color_day_in: "#34d399",  // daily kWh into the house
+  color_day_out: "#fb923c", // daily kWh out of the house
+  price_show_minmax: false, // mark each day's highest / lowest price in the price chart
   // "Usage" tab: last-hour power (W) breakdown by source (solar/battery/grid). Reuses the
   // solar_power/battery_charge_power/battery_discharge_power/grid_power entities already
   // configured for the flow diagram — no separate entities needed.

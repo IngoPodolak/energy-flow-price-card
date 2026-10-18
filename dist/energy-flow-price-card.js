@@ -95,7 +95,7 @@ const DEFAULTS = {
   price_hours: 24,
   price_start: "midnight", // "now" | "midnight"
   price_lookback_hours: 2, // 1-12: how far back the axis starts when price_start is "now"
-  car_mode: "scroll",       // "scroll" | "merged"
+  car_mode: "row",          // "row" (all devices at once) | "scroll" | "merged"
   car_scroll_interval: 5,   // seconds
   language: "auto",         // "auto" | "nl" | "en" | "de"
   flow_speed: 1.0,          // overall speed multiplier for the flowing dashes
@@ -131,6 +131,10 @@ const DEFAULTS = {
   tap_action: "graph",      // "graph" | "more-info" | "none"
   hold_action: "more-info", // "graph" | "more-info" | "none"
   color_grid_export: "#22c55e", // grid chart: area color for export (below zero)
+  flow_min_power: 5,        // W: below this a branch counts as idle (line hidden; idle devices hidden unless display_zero)
+  color_day_in: "#34d399",  // daily kWh into the house
+  color_day_out: "#fb923c", // daily kWh out of the house
+  price_show_minmax: false, // mark each day's highest / lowest price in the price chart
   // "Usage" tab: last-hour power (W) breakdown by source (solar/battery/grid). Reuses the
   // solar_power/battery_charge_power/battery_discharge_power/grid_power entities already
   // configured for the flow diagram — no separate entities needed.
@@ -349,6 +353,18 @@ const TRANSLATIONS = {
     ed_history_range: "Default time span (history charts)",
     ed_color_grid_export: "Color export",
     ed_chart_tabs_note: "Cycle through the available tabs automatically. Pauses while you have picked a point in time with the slider.",
+    day_in: "Today into the house",
+    day_out: "Today out of the house",
+    day_home: "Home usage today",
+    ed_flow_min_power: "Hide line below",
+    ed_flow_min_power_note: "Below this power a branch counts as off: its line is hidden and — unless display zero is on — an idle device disappears from the device row.",
+    ed_car_row: "All at once (own row)",
+    ed_car_scroll: "Cycle (switches automatically)",
+    ed_car_merged: "Static (1 icon, all info)",
+    ed_color_day_in: "Color daily value into house",
+    ed_color_day_out: "Color daily value out of house",
+    ed_price_minmax: "Mark daily highest and lowest price",
+    ed_car_note: "Cars and any other devices. With \"All at once\" a devices hub (total) appears bottom-right and every device is shown below with its own line.",
   },
   nl: {
     solar: "Solar",
@@ -613,6 +629,18 @@ const TRANSLATIONS = {
     ed_history_range: "Standard-Zeitspanne (Verlaufsdiagramme)",
     ed_color_grid_export: "Farbe Einspeisung",
     ed_chart_tabs_note: "Automatisch zwischen den verfügbaren Tabs wechseln (Preis / Solar / Netz / Akku / Verbrauch / Geräte). Hält an, solange du mit dem Schieberegler einen Zeitpunkt ausgewählt hast.",
+    day_in: "Heute ins Haus",
+    day_out: "Heute aus dem Haus",
+    day_home: "Hausverbrauch heute",
+    ed_flow_min_power: "Linie ausblenden unter",
+    ed_flow_min_power_note: "Unter dieser Leistung gilt ein Strang als „aus“: die Linie wird ausgeblendet und – wenn „Leere Zweige anzeigen“ aus ist – verschwindet ein inaktives Gerät aus der Geräte-Zeile.",
+    ed_car_row: "Alle gleichzeitig (eigene Zeile)",
+    ed_car_scroll: "Abwechselnd (wechselt automatisch)",
+    ed_car_merged: "Statisch (1 Symbol, alle Infos)",
+    ed_color_day_in: "Farbe Tageswert ins Haus",
+    ed_color_day_out: "Farbe Tageswert aus dem Haus",
+    ed_price_minmax: "Tageshöchst- und Tagestiefstpreis einzeichnen",
+    ed_car_note: "Autos und beliebige andere Geräte (Klima, Wärmepumpe, Backofen …). Bei „Alle gleichzeitig“ erscheint unten rechts ein Geräte-Knoten mit der Summe und darunter jedes Gerät mit eigener Linie.",
   },
 };
 
@@ -675,7 +703,7 @@ class EnergyFlowPriceCardEditor extends LitElement {
 
   _resetColors() {
     const next = { ...this._config };
-    ["color_solar", "color_battery", "color_grid", "color_grid_export", "color_car", "color_home"].forEach((k) => { next[k] = DEFAULTS[k]; });
+    ["color_solar", "color_battery", "color_grid", "color_grid_export", "color_car", "color_home", "color_day_in", "color_day_out"].forEach((k) => { next[k] = DEFAULTS[k]; });
     next.price_stops = DEFAULT_PRICE_STOPS.map((s) => ({ ...s }));
     this._emit(next);
   }
@@ -798,6 +826,8 @@ class EnergyFlowPriceCardEditor extends LitElement {
       { key: "color_grid_export", label: T("ed_color_grid_export") },
       { key: "color_car", label: T("ed_color_car") },
       { key: "color_home", label: T("ed_color_home") },
+      { key: "color_day_in", label: T("ed_color_day_in") },
+      { key: "color_day_out", label: T("ed_color_day_out") },
     ];
 
     return html`
@@ -813,6 +843,12 @@ class EnergyFlowPriceCardEditor extends LitElement {
           <ha-formfield label=${T("ed_display_zero")}>
             <ha-switch .checked=${displayZero} @change=${(e) => this._toggle("display_zero", e)}></ha-switch>
           </ha-formfield>
+          <label class="sel-row">
+            <span>${T("ed_flow_min_power")}</span>
+            <span class="numwrap"><input class="num" type="number" min="0" step="1" .value=${String(this._config.flow_min_power ?? 5)}
+              @change=${(e) => { const v = parseFloat(e.target.value); this._emit({ ...this._config, flow_min_power: isNaN(v) ? 5 : Math.max(0, v) }); }} /> W</span>
+          </label>
+          <div class="note">${T("ed_flow_min_power_note")}</div>
           <ha-formfield label=${T("ed_battery_ring")}>
             <ha-switch .checked=${this._config.battery_ring !== false} @change=${(e) => this._toggle("battery_ring", e)}></ha-switch>
           </ha-formfield>
@@ -914,12 +950,12 @@ class EnergyFlowPriceCardEditor extends LitElement {
           </div>
           <label class="sel-row">
             <span>${T("ed_car_display")}</span>
-            <select .value=${this._config.car_mode ?? "scroll"} @change=${(e) => this._emit({ ...this._config, car_mode: e.target.value })}>
-              <option value="scroll">${T("ed_car_scroll")}</option>
-              <option value="merged">${T("ed_car_merged")}</option>
+            <select @change=${(e) => this._emit({ ...this._config, car_mode: e.target.value })}>
+              ${[["row", T("ed_car_row")], ["scroll", T("ed_car_scroll")], ["merged", T("ed_car_merged")]].map(([v, l]) => html`
+                <option value=${v} ?selected=${(this._config.car_mode ?? "row") === v}>${l}</option>`)}
             </select>
           </label>
-          ${(this._config.car_mode ?? "scroll") === "scroll" ? html`
+          ${this._config.car_mode === "scroll" ? html`
             <div class="slider-row">
               <span>${T("ed_car_interval")}: <b>${this._config.car_scroll_interval ?? 5}s</b></span>
               <input type="range" min="2" max="15" step="1" .value=${this._config.car_scroll_interval ?? 5}
@@ -999,6 +1035,9 @@ class EnergyFlowPriceCardEditor extends LitElement {
             </div>` : nothing}
           <ha-formfield label=${T("ed_relative_hours")}>
             <ha-switch .checked=${this._config.price_relative_hours === true} @change=${(e) => this._toggle("price_relative_hours", e)}></ha-switch>
+          </ha-formfield>
+          <ha-formfield label=${T("ed_price_minmax")}>
+            <ha-switch .checked=${this._config.price_show_minmax === true} @change=${(e) => this._toggle("price_show_minmax", e)}></ha-switch>
           </ha-formfield>
           <ha-formfield label=${T("ed_day_marker")}>
             <ha-switch .checked=${this._config.price_show_day_marker === true} @change=${(e) => this._toggle("price_show_day_marker", e)}></ha-switch>
@@ -1124,6 +1163,8 @@ class EnergyFlowPriceCardEditor extends LitElement {
       .reset, .add, .mini { cursor: pointer; border: 1px solid var(--primary-color); background: transparent; color: var(--primary-color); border-radius: 8px; padding: 5px 10px; font-size: 12px; }
       .mini { border-color: var(--error-color, #ef4444); color: var(--error-color, #ef4444); padding: 2px 8px; }
       .add { align-self: flex-start; }
+      .numwrap { display: inline-flex; align-items: center; gap: 6px; }
+      .num { width: 80px; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--divider-color); background: var(--card-background-color); color: var(--primary-text-color); }
       .subblock { display: flex; flex-direction: column; gap: 8px; padding: 8px 0 4px 12px; border-left: 2px solid var(--divider-color); }
       .anchors summary { cursor: pointer; font-size: 13px; padding: 4px 0; }
       .anchor-row { display: grid; grid-template-columns: 1fr; gap: 2px; font-size: 12px; margin: 6px 0; }
@@ -1429,6 +1470,13 @@ class EnergyFlowPriceCard extends LitElement {
     return h;
   }
 
+  // Power (W) below which a branch counts as idle: its line is hidden and, unless
+  // display_zero is on, an idle device disappears from the device row.
+  _thr() {
+    const v = parseFloat(this._config?.flow_min_power);
+    return isNaN(v) ? 5 : Math.max(0, v);
+  }
+
   _cars() {
     return Array.isArray(this._config.cars) ? this._config.cars : [];
   }
@@ -1453,7 +1501,7 @@ class EnergyFlowPriceCard extends LitElement {
     const now = Date.now();
     const c = this._config;
     const p = power === null ? 0 : Math.abs(power);
-    const active = p > 5;
+    const active = p > this._thr();
     let w = this._wires[key];
     if (!w) w = this._wires[key] = { lastActive: active ? now : 0, shownSince: active ? now : 0, wasShown: active, dispReversed: reversed, dirPhase: "idle", dirPhaseStart: 0 };
 
@@ -1818,7 +1866,7 @@ class EnergyFlowPriceCard extends LitElement {
     const action = kind === "hold" ? (c.hold_action ?? "more-info") : (c.tap_action ?? "graph");
     if (action === "none") return;
     if (action === "graph") {
-      const tab = { grid: "grid", solar: "solar", battery: c.battery_soc ? "accu" : "usage", home: "usage", devices: "devices" }[key];
+      const tab = key.startsWith("dev:") ? "devices" : { grid: "grid", solar: "solar", battery: c.battery_soc ? "accu" : "usage", home: "usage", devices: "devices" }[key];
       if (c.show_price && this._chartTabs().some((t) => t.id === tab)) {
         this._setChartMode(tab, true);
         const el = this.renderRoot?.querySelector?.(".price");
@@ -1840,6 +1888,7 @@ class EnergyFlowPriceCard extends LitElement {
     if (key === "grid") return c.grid_power || c.energy_grid_import;
     if (key === "solar") return c.solar_power || c.energy_solar;
     if (key === "battery") return c.battery_soc || c.battery_charge_power || c.battery_discharge_power;
+    if (key.startsWith("dev:")) return this._devEntities?.[parseInt(key.slice(4), 10)] || null;
     if (key === "devices") {
       const devs = this._devices().filter((d) => d.power || d.soc);
       if (!devs.length) return null;
@@ -1861,10 +1910,11 @@ class EnergyFlowPriceCard extends LitElement {
     };
     const home = this._homePower(v);
 
-    const battValue = (v.charge && v.charge > 5) ? v.charge : (v.discharge && v.discharge > 5) ? v.discharge : (v.charge ?? v.discharge);
-    const battLabel = v.charge && v.charge > 5 ? this._t("charging") : v.discharge && v.discharge > 5 ? this._t("discharging") : "";
-    const gridLabel = v.grid === null ? "" : v.grid < 0 ? this._t("export") : this._t("import");
-    const act = (val) => val !== null && Math.abs(val) > 5;
+    const thr = this._thr();
+    const battValue = (v.charge && v.charge > thr) ? v.charge : (v.discharge && v.discharge > thr) ? v.discharge : (v.charge ?? v.discharge);
+    const battLabel = v.charge && v.charge > thr ? this._t("charging") : v.discharge && v.discharge > thr ? this._t("discharging") : "";
+    const gridLabel = v.grid === null || Math.abs(v.grid) <= thr ? "" : v.grid < 0 ? this._t("export") : this._t("import");
+    const act = (val) => val !== null && Math.abs(val) > thr;
 
     const solarHasEnt = !!c.solar_power;
     const gridHasEnt = !!c.grid_power;
@@ -1886,7 +1936,7 @@ class EnergyFlowPriceCard extends LitElement {
       const chargingState = d.charging ? hass.states?.[d.charging]?.state : null;
       const isGuest = d.type === "car" && !!d.charging && powerActive && chargingState !== "on";
       if (isGuest) {
-        guests.push({ name: this._t("guest_car"), power: p, soc: null, active: true, hasEnt: true, icon: "mdi:car-electric", isCar: true, day: null });
+        guests.push({ name: this._t("guest_car"), power: p, soc: null, active: true, hasEnt: true, icon: "mdi:car-electric", isCar: true, day: null, entity: d.power, color: d.color });
       }
       return {
         name: d.name || `${this._t("dev_" + d.type) || this._t("car")} ${i + 1}`,
@@ -1898,10 +1948,19 @@ class EnergyFlowPriceCard extends LitElement {
         isCar: d.type === "car",
         color: d.color,
         day: daily ? daily.devices[i] : null,
+        entity: d.power || d.soc,
       };
     });
     const allDevs = [...items, ...guests];
     const devHasEnt = allDevs.some((x) => x.hasEnt);
+    this._devEntities = allDevs.map((x) => x.entity);
+    const devMode = ["merged", "scroll"].includes(c.car_mode) ? c.car_mode : "row";
+    const rowMode = devMode === "row" && allDevs.length > 1;
+    const rowDevs = rowMode
+      ? allDevs
+          .map((d, idx) => ({ ...d, idx, ws: this._wireState("dev:" + idx, d.active ? d.power : 0, true) }))
+          .filter((d) => c.display_zero || d.ws.show)
+      : [];
     const devsShown = allDevs.length ? allDevs : [{ name: this._t("devices"), power: null, soc: null, active: false, hasEnt: false, icon: "mdi:power-plug", isCar: false, day: null }];
 
     const bs = (() => {
@@ -1919,20 +1978,20 @@ class EnergyFlowPriceCard extends LitElement {
     const arrowFromHouse = (k) => (sideOf(k) === "left" ? "←" : "→");
 
     // Wire power / direction (reversed = flowing from the house to the node).
-    const battPow = v.charge && v.charge > 5 ? v.charge : (v.discharge && v.discharge > 5 ? v.discharge : 0);
+    const battPow = v.charge && v.charge > thr ? v.charge : (v.discharge && v.discharge > thr ? v.discharge : 0);
     const devPow = (() => { let m = 0; for (const x of allDevs) { if (x.active && Math.abs(x.power) > m) m = Math.abs(x.power); } return m; })();
     const ws = {
       solar: this._wireState("solar", v.solar, false),
       grid: this._wireState("grid", v.grid, v.grid < 0),
-      battery: this._wireState("batt", battPow, !!(v.charge && v.charge > 5)),
+      battery: this._wireState("batt", battPow, !!(v.charge && v.charge > thr)),
       devices: this._wireState("car", devPow, true),
     };
-    if (Object.values(ws).some((w) => w.show)) this._scheduleFlowTick();
+    if (Object.values(ws).some((w) => w.show) || rowDevs.some((d) => d.ws.show)) this._scheduleFlowTick();
 
     // ---- wire geometry, in real pixels of the measured flow box ----
     // Every wire is made of horizontal and vertical segments only.
     const g = this._geo;
-    const W = g?.W || 0, H = g?.H || 190;
+    const W = g?.W || 0, H = g?.FH || 190, HW = g?.H || H;
     const wirePts = {};
     if (W && g.home) {
       if (!visual) {
@@ -1969,6 +2028,27 @@ class EnergyFlowPriceCard extends LitElement {
           const fx = frame[sideOf(k)];
           wirePts[k] = [{ x: iconX, y: iconY }, { x: fx, y: iconY }, { x: fx, y: EP[k].y }, { x: EP[k].x, y: EP[k].y }];
         }
+      }
+    }
+
+    // Device row: from the "devices" hub down to a bus line, then into each device.
+    const rowWires = [];
+    if (W && g.devices && rowDevs.length) {
+      const hub = g.devices;
+      const found = rowDevs.map((d) => ({ d, a: g["dev" + d.idx] })).filter((x) => x.a);
+      const tops = [...new Set(found.map((x) => Math.round(x.a.top)))].sort((a, b) => a - b);
+      const bus = (t) => t - 10;
+      for (const { d, a } of found) {
+        const r = tops.indexOf(Math.round(a.top));
+        const y0 = bus(tops[0]);
+        const pts = [{ x: hub.cx, y: hub.bottom + 4 }, { x: hub.cx, y: y0 }];
+        if (r > 0) {
+          const yr = bus(tops[r]);
+          pts.push({ x: W - 4, y: y0 }, { x: W - 4, y: yr }, { x: a.cx, y: yr });
+        } else pts.push({ x: a.cx, y: y0 });
+        pts.push({ x: a.cx, y: a.top - 4 });
+        const clean = pts.filter((p, i) => i === 0 || Math.abs(p.x - pts[i - 1].x) > 0.5 || Math.abs(p.y - pts[i - 1].y) > 0.5);
+        rowWires.push({ key: "dev" + d.idx, pts: clean, st: d.ws, color: d.color || c.color_car });
       }
     }
 
@@ -2012,14 +2092,13 @@ class EnergyFlowPriceCard extends LitElement {
     const wireKeys = ["grid", "solar", "battery", "devices"];
     const bases = Object.fromEntries(wireKeys.map((k) => [k, baseWire(k, wirePts[k])]));
 
-    const dayLine = (txt) => (daily && txt ? html`<span class="day">${txt}</span>` : nothing);
-    const kwh = (x) => (x == null ? null : fmtKWh(x));
-    const gridDay = daily && (daily.gridIn != null || daily.gridOut != null)
-      ? `${arrowToHouse("grid")} ${kwh(daily.gridIn) ?? "–"}  ${arrowFromHouse("grid")} ${kwh(daily.gridOut) ?? "–"} kWh` : "";
-    const battDay = daily && (daily.battOut != null || daily.battIn != null)
-      ? `${arrowToHouse("battery")} ${kwh(daily.battOut) ?? "–"}  ${arrowFromHouse("battery")} ${kwh(daily.battIn) ?? "–"} kWh` : "";
-    const solarDay = daily && daily.solar != null ? `${arrowToHouse("solar")} ${kwh(daily.solar)} kWh` : "";
-    const homeDay = daily && daily.home != null ? `Σ ${kwh(daily.home)} kWh` : "";
+    // Today's kWh: one line per direction, with a "into the house" / "out of the house" icon.
+    const dayIn = (x) => (daily && x != null
+      ? html`<span class="day in" title=${this._t("day_in")}><ha-icon icon="mdi:home-import-outline"></ha-icon>${fmtKWh(x)} kWh</span>` : nothing);
+    const dayOut = (x) => (daily && x != null
+      ? html`<span class="day out" title=${this._t("day_out")}><ha-icon icon="mdi:home-export-outline"></ha-icon>${fmtKWh(x)} kWh</span>` : nothing);
+    const homeDayLine = daily && daily.home != null
+      ? html`<span class="day home" title=${this._t("day_home")}><ha-icon icon="mdi:home-lightning-bolt-outline"></ha-icon>${fmtKWh(daily.home)} kWh</span>` : nothing;
 
     const node = (k, muted, inner, extraCls = "") => {
       const ev = this._nodeEvents(k);
@@ -2035,27 +2114,33 @@ class EnergyFlowPriceCard extends LitElement {
 
     const homeEv = this._nodeEvents("home");
 
+    const rowBases = rowWires.map((w) => baseWire(w.key, w.pts));
+    const wrapStyle = `--efp-day-in:${c.color_day_in || "#34d399"};--efp-day-out:${c.color_day_out || "#fb923c"};--efp-day-home:${c.color_home}`;
+
     return html`
-      <div class="flow ${visual ? "visual" : ""}">
+      <div class="flowwrap" style="${wrapStyle}">
+      <svg class="wires" viewBox="0 0 ${W || 1} ${HW}" preserveAspectRatio="none">
+        <defs>${wireKeys.map((k) => bases[k].defs)}${rowBases.map((b) => b.defs)}</defs>
+        ${wireKeys.map((k) => {
+          const pts = wirePts[k];
+          if (!pts) return nothing;
+          const st = ws[k];
+          return svg`${bases[k].path}
+            ${st.show ? svg`<path class="${liveClass(st)}" style="${liveStyle(st, wireColor[k])}" data-speed="${st.duration}" d="${liveD(pts, st.reversed)}"></path>` : nothing}`;
+        })}
+        ${rowWires.map((w, i) => svg`${rowBases[i].path}
+          ${w.st.show ? svg`<path class="${liveClass(w.st)}" style="${liveStyle(w.st, w.color)}" data-speed="${w.st.duration}" d="${liveD(w.pts, false)}"></path>` : nothing}`)}
+      </svg>
+      <div class="flow ${visual ? "visual" : ""} ${daily ? "tall" : ""}">
         ${visual ? html`<img class="housepic" data-anc="pic" src="${this._houseImage()}" alt="" @load=${() => this._measure(true)} />` : nothing}
-        <svg class="wires" viewBox="0 0 ${W || 1} ${H}" preserveAspectRatio="none">
-          <defs>${wireKeys.map((k) => bases[k].defs)}</defs>
-          ${wireKeys.map((k) => {
-            const pts = wirePts[k];
-            if (!pts) return nothing;
-            const st = ws[k];
-            return svg`${bases[k].path}
-              ${st.show ? svg`<path class="${liveClass(st)}" style="${liveStyle(st, wireColor[k])}" data-speed="${st.duration}" d="${liveD(pts, st.reversed)}"></path>` : nothing}`;
-          })}
-        </svg>
 
         ${node("solar", !solarHasEnt, html`
           ${squareIcon("solar", "mdi:solar-power-variant", solarCol)}
-          <div class="txt"><span class="lbl">${this._t("solar")}</span><span class="val" style="color:${solarCol}">${fmtPower(v.solar)}</span>${dayLine(solarDay)}</div>`)}
+          <div class="txt"><span class="lbl">${this._t("solar")}</span><span class="val" style="color:${solarCol}">${fmtPower(v.solar)}</span>${dayIn(daily?.solar)}</div>`)}
 
         ${node("grid", !gridHasEnt, html`
           ${squareIcon("grid", "mdi:transmission-tower", gridCol)}
-          <div class="txt"><span class="lbl">${this._t("grid")}</span><span class="val" style="color:${gridCol}">${fmtPower(v.grid)}</span>${gridLabel ? html`<span class="sub" style="color:${gridCol}">${gridLabel}</span>` : nothing}${dayLine(gridDay)}</div>`)}
+          <div class="txt"><span class="lbl">${this._t("grid")}</span><span class="val" style="color:${gridCol}">${fmtPower(v.grid)}</span>${gridLabel ? html`<span class="sub" style="color:${gridCol}">${gridLabel}</span>` : nothing}${dayIn(daily?.gridIn)}${dayOut(daily?.gridOut)}</div>`)}
 
         ${node("battery", !battHasEnt, html`
           ${c.battery_ring !== false
@@ -2067,9 +2152,11 @@ class EnergyFlowPriceCard extends LitElement {
                 <div class="ic round" style="color:${battCol}"><ha-icon icon="mdi:battery-charging"></ha-icon></div>
               </div>`
             : squareIcon("battery", "mdi:battery-charging", battCol)}
-          <div class="txt"><span class="lbl">${this._t("battery")}${battHasEnt && v.soc !== null ? html` · <b style="color:${battCol}">${Math.round(v.soc)}%</b>` : nothing}</span><span class="val" style="color:${battCol}">${fmtPower(battValue)}</span>${battLabel ? html`<span class="sub" style="color:${battCol}">${battLabel}</span>` : nothing}${dayLine(battDay)}</div>`)}
+          <div class="txt"><span class="lbl">${this._t("battery")}${battHasEnt && v.soc !== null ? html` · <b style="color:${battCol}">${Math.round(v.soc)}%</b>` : nothing}</span><span class="val" style="color:${battCol}">${fmtPower(battValue)}</span>${battLabel ? html`<span class="sub" style="color:${battCol}">${battLabel}</span>` : nothing}${dayIn(daily?.battOut)}${dayOut(daily?.battIn)}</div>`)}
 
-        ${this._renderDevices(devsShown, c, devHasEnt, node, arrowFromHouse("devices"), !!daily)}
+        ${rowMode
+          ? this._renderDeviceHub(allDevs, c, devHasEnt, node, daily, dayOut)
+          : this._renderDevices(devsShown, c, devHasEnt, node, dayOut, devMode)}
 
         ${visual ? html`<div class="huis-wire"></div>` : nothing}
         <div class="huis ${visual ? "huis-visual" : ""}${reduceEffects ? " no-fx" : ""}"
@@ -2081,16 +2168,61 @@ class EnergyFlowPriceCard extends LitElement {
           ${visual ? html`<span class="anc-home" data-anc="home"></span>` : nothing}
           <span class="lbl">${this._t("home")}</span>
           <span class="val" style="color:${c.color_home}">${fmtPower(home)}</span>
-          ${dayLine(homeDay)}
+          ${homeDayLine}
         </div>
+      </div>
+      ${rowDevs.length ? html`<div class="devrow">${rowDevs.map((d) => this._renderDeviceItem(d, c, dayOut))}</div>` : nothing}
       </div>
     `;
   }
 
-  _renderDevices(devs, c, hasEnt, node, arrow, showDay) {
+  // "Devices" hub in the bottom-right corner when every device is shown in its own row.
+  _renderDeviceHub(devs, c, hasEnt, node, daily, dayOut) {
+    const cc = hasEnt ? c.color_car : "#6b7280";
+    const total = devs.reduce((s, d) => s + (d.active && d.power > 0 ? d.power : 0), 0);
+    const anyDay = daily && devs.some((d) => d.day != null);
+    const dayTotal = anyDay ? devs.reduce((s, d) => s + (d.day || 0), 0) : null;
+    const activeCount = devs.filter((d) => d.active).length;
+    return node("devices", !hasEnt, html`
+      <div class="ic" data-anc="devices" style="color:${cc};border-color:${cc}66;background:${cc}22">
+        <ha-icon icon="mdi:power-socket-de"></ha-icon>
+      </div>
+      <div class="txt">
+        <span class="lbl">${this._t("devices")}</span>
+        <span class="val" style="color:${cc}">${fmtPower(total)}</span>
+        ${activeCount ? html`<span class="sub" style="color:${cc}">${activeCount} ${this._t("active")}</span>` : nothing}
+        ${dayOut(dayTotal)}
+      </div>`, "car");
+  }
+
+  _renderDeviceItem(d, c, dayOut) {
+    const cc = d.hasEnt ? d.color || c.color_car : "#6b7280";
+    const ev = this._nodeEvents("dev:" + d.idx);
+    const ring = c.car_ring !== false && d.isCar && d.soc != null;
+    const r = 18, circ = 2 * Math.PI * r;
+    const pct = d.soc == null ? 0 : Math.max(0, Math.min(100, d.soc)) / 100;
+    return html`<div class="devitem ${d.active ? "" : "idle"}"
+      @pointerdown=${ev.down} @pointerup=${ev.up} @pointermove=${ev.move}
+      @pointerleave=${ev.cancel} @pointercancel=${ev.cancel} @contextmenu=${(e) => e.preventDefault()}>
+      ${ring
+        ? html`<div class="socwrap sm" data-anc="dev${d.idx}">
+            <svg class="socring" viewBox="0 0 42 42">
+              <circle cx="21" cy="21" r="${r}" fill="none" stroke="rgba(255,255,255,.12)" stroke-width="3"></circle>
+              ${svg`<circle cx="21" cy="21" r="${r}" fill="none" stroke="${cc}" stroke-width="3" stroke-linecap="round" stroke-dasharray="${circ}" stroke-dashoffset="${circ * (1 - pct)}" transform="rotate(-90 21 21)"></circle>`}
+            </svg>
+            <div class="ic round" style="color:${cc}"><ha-icon icon="${d.icon}"></ha-icon></div>
+          </div>`
+        : html`<div class="ic" data-anc="dev${d.idx}" style="color:${cc};border-color:${cc}66;background:${cc}22"><ha-icon icon="${d.icon}"></ha-icon></div>`}
+      <span class="lbl">${d.name}${d.soc != null ? html` · <b style="color:${cc}">${Math.round(d.soc)}%</b>` : nothing}</span>
+      <span class="val" style="color:${cc}">${fmtPower(d.power)}</span>
+      ${d.active ? html`<span class="sub" style="color:${cc}">${d.isCar ? this._t("charging") : this._t("active")}</span>` : nothing}
+      ${dayOut(d.day)}
+    </div>`;
+  }
+
+  _renderDevices(devs, c, hasEnt, node, dayOut, mode) {
     const GREY = "#6b7280";
     const colOf = (d) => (hasEnt ? d.color || c.color_car : GREY);
-    const mode = c.car_mode === "merged" ? "merged" : "scroll";
     const showRing = c.car_ring !== false;
     const info = (d) => {
       const cc = colOf(d);
@@ -2098,7 +2230,7 @@ class EnergyFlowPriceCard extends LitElement {
         <span class="lbl">${d.name}${d.soc != null ? html` · <b style="color:${cc}">${Math.round(d.soc)}%</b>` : nothing}</span>
         <span class="val" style="color:${cc}">${fmtPower(d.power)}</span>
         ${d.active ? html`<span class="sub" style="color:${cc}">${d.isCar ? this._t("charging") : this._t("active")}</span>` : nothing}
-        ${showDay && d.day != null ? html`<span class="day">${arrow} ${fmtKWh(d.day)} kWh</span>` : nothing}`;
+        ${dayOut(d.day)}`;
     };
     const squareIcon = (icon, cc) => html`
       <div class="ic" data-anc="devices" style="color:${cc};border-color:${cc}66;background:${cc}22">
@@ -2119,7 +2251,7 @@ class EnergyFlowPriceCard extends LitElement {
     };
     const iconFor = (d) => (showRing && d.isCar && d.soc != null ? ringIcon(d) : squareIcon(d.icon, colOf(d)));
 
-    if (mode === "merged" || devs.length === 1) {
+    if (mode !== "scroll" || devs.length === 1) {
       const single = devs.length === 1 ? devs[0] : null;
       const sameIcon = devs.every((d) => d.icon === devs[0].icon);
       const icon = single ? iconFor(single) : squareIcon(sameIcon ? devs[0].icon : "mdi:power-plug", hasEnt ? c.color_car : GREY);
@@ -2142,8 +2274,9 @@ class EnergyFlowPriceCard extends LitElement {
 
   // Measure where the icons actually are, so wires can start/end exactly at them.
   _measure(force = false) {
-    const flow = this.renderRoot?.querySelector?.(".flow");
-    if (!flow) return;
+    const flow = this.renderRoot?.querySelector?.(".flowwrap");
+    const top = this.renderRoot?.querySelector?.(".flow");
+    if (!flow || !top) return;
     if (this._roTarget !== flow && typeof ResizeObserver !== "undefined") {
       if (this._ro) this._ro.disconnect();
       this._ro = new ResizeObserver(() => this._measure());
@@ -2152,7 +2285,7 @@ class EnergyFlowPriceCard extends LitElement {
     }
     const fr = flow.getBoundingClientRect();
     if (!fr.width) return;
-    const m = { W: Math.round(fr.width), H: Math.round(fr.height) };
+    const m = { W: Math.round(fr.width), H: Math.round(fr.height), FH: Math.round(top.getBoundingClientRect().height) };
     flow.querySelectorAll("[data-anc]").forEach((el) => {
       const r = el.getBoundingClientRect();
       const box = {
@@ -2655,7 +2788,25 @@ class EnergyFlowPriceCard extends LitElement {
     }
 
     const withData = slots.filter((s) => s.v !== null);
-    const maxV = withData.length ? Math.max(...withData.map((s) => s.v), 0.1) * 1.1 : 0.4;
+    const showMinMax = !!c.price_show_minmax;
+    const maxV = withData.length ? Math.max(...withData.map((s) => s.v), 0.1) * (showMinMax ? 1.22 : 1.1) : 0.4;
+    // Daily highest / lowest price within the visible window (only for days with enough data).
+    const minMax = [];
+    if (showMinMax) {
+      const byDay = new Map();
+      slots.forEach((s, i) => {
+        if (s.v === null) return;
+        const k = new Date(s.t).toDateString();
+        if (!byDay.has(k)) byDay.set(k, []);
+        byDay.get(k).push(i);
+      });
+      for (const idxs of byDay.values()) {
+        if (idxs.length < 4) continue;
+        let lo = idxs[0], hi = idxs[0];
+        for (const i of idxs) { if (slots[i].v < slots[lo].v) lo = i; if (slots[i].v > slots[hi].v) hi = i; }
+        minMax.push({ i: hi, kind: "max" }, { i: lo, kind: "min" });
+      }
+    }
 
     const nowFrac = Math.max(0, Math.min(1, (now - startMs) / (endMs - startMs)));
 
@@ -2730,6 +2881,12 @@ class EnergyFlowPriceCard extends LitElement {
             ? this._priceBarsBody(slots, maxV, stops, sel, profile)
             : this._priceLineBody(slots, maxV, profile, sel)}
           ${dayMarkers.map((d) => html`<div class="daymarker" data-label="${d.text}" style="left:${d.frac * 100}%"></div>`)}
+          ${minMax.map((m) => {
+            const sl = slots[m.i];
+            const x = profile.chart_style === "bars" ? ((m.i + 0.5) / slots.length) * 100 : (m.i / Math.max(1, slots.length - 1)) * 100;
+            const y = Math.max(0, Math.min(100, (sl.v / maxV) * 100));
+            return html`<div class="pmark ${m.kind}" style="left:${x}%;bottom:${y}%"><span>${m.kind === "max" ? "▲" : "▼"} ${sl.v.toFixed(2).replace(".", ",")}</span></div>`;
+          })}
           <div class="nowline" data-now="${this._t("now")}" style="left:${nowFrac * 100}%"></div>
         </div>
         <div class="xaxis ${showRel ? "abs" : ""}">
@@ -2876,8 +3033,27 @@ class EnergyFlowPriceCard extends LitElement {
     return css`
       ha-card { padding: 12px; }
       .stack { display: flex; flex-direction: column; gap: 12px; }
+      .flowwrap { position: relative; }
       .flow { position: relative; height: 190px; }
+      .flow.tall { height: 236px; }
+      .node.tl, .node.tr { align-items: flex-start; }
+      .node.bl, .node.br { align-items: flex-end; }
+      .devrow { position: relative; z-index: 2; display: grid; grid-template-columns: repeat(auto-fit, minmax(92px, 1fr)); gap: 22px 6px; margin-top: 22px; }
+      .devitem { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 1px; cursor: pointer; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; touch-action: manipulation; min-width: 0; }
+      .devitem.idle { opacity: .55; }
+      .devitem .ic { width: 38px; height: 38px; border-radius: 11px; display: flex; align-items: center; justify-content: center; border: 1.5px solid transparent; margin-bottom: 3px; }
+      .devitem .ic ha-icon { --mdc-icon-size: 21px; }
+      .devitem .socwrap.sm { width: 38px; height: 38px; margin-bottom: 3px; }
+      .devitem .socwrap.sm .ic { width: 38px; height: 38px; margin: 0; }
+      .devitem .lbl { font-size: 10.5px; color: var(--secondary-text-color); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .devitem .val { font-size: 14px; font-weight: 700; line-height: 1.1; }
+      .devitem .sub { font-size: 9px; text-transform: uppercase; letter-spacing: .4px; opacity: .85; }
       .housepic { position: absolute; top: 0; left: 50%; height: 100%; width: auto; max-width: none; transform: translateX(-50%); pointer-events: none; z-index: 0; }
+      .pmark { position: absolute; transform: translate(-50%, 0); pointer-events: none; z-index: 2; display: flex; flex-direction: column; align-items: center; }
+      .pmark span { font-size: 9px; font-weight: 700; padding: 0 4px; border-radius: 4px; margin-bottom: 3px; white-space: nowrap; color: #fff; line-height: 14px; }
+      .pmark::after { content: ""; width: 7px; height: 7px; border-radius: 50%; margin-bottom: -3.5px; box-shadow: 0 0 0 2px var(--card-background-color, #1c1c1c); }
+      .pmark.max span, .pmark.max::after { background: #ef4444; }
+      .pmark.min span, .pmark.min::after { background: #16a34a; }
       .wires { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1; }
       .wire { fill: none; stroke: rgba(255,255,255,.07); stroke-width: 2.5; }
       .live { stroke-width: 2.5; fill: none; stroke-linecap: round; stroke-linejoin: round; opacity: 1; transition: opacity 1s ease; }
@@ -2896,7 +3072,11 @@ class EnergyFlowPriceCard extends LitElement {
       .node { cursor: pointer; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
       .node .ic, .node .socwrap { transition: transform .15s ease; }
       .node:active .ic, .node:active .socwrap { transform: scale(.94); }
-      .txt .day { font-size: 10px; color: var(--secondary-text-color); white-space: nowrap; font-variant-numeric: tabular-nums; margin-top: 1px; }
+      .day { display: inline-flex; align-items: center; gap: 3px; font-size: 12.5px; font-weight: 600; white-space: nowrap; font-variant-numeric: tabular-nums; margin-top: 2px; line-height: 1.15; }
+      .day ha-icon { --mdc-icon-size: 16px; }
+      .day.in { color: var(--efp-day-in); }
+      .day.out { color: var(--efp-day-out); }
+      .day.home { color: var(--efp-day-home); }
       .node.bl { left: 6px; bottom: 8px; }
       .node.muted { opacity: .55; }
       .node.muted .val, .node.muted .sub { opacity: .8; }
@@ -2923,12 +3103,14 @@ class EnergyFlowPriceCard extends LitElement {
       .cardots .dot { width: 6px; height: 6px; border-radius: 50%; transition: background .3s; }
 
       .huis { cursor: pointer; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
-      .huis .day { font-size: 10px; color: var(--secondary-text-color); white-space: nowrap; }
+
       .anc-home { width: 1px; height: 1px; }
       .huis { position: absolute; left: 50%; top: 54.7%; transform: translate(-50%, -29px); z-index: 3; display: flex; flex-direction: column; align-items: center; gap: 2px; text-align: center; }
       .huis.huis-visual { left: 50%; top: 50%; align-items: flex-end; text-align: right; transform: translate(calc(-100% - 110px), -50%); }
       .huis.huis-visual .lbl, .huis.huis-visual .val { text-shadow: 0 1px 3px rgba(0,0,0,.8), 0 0 6px rgba(0,0,0,.6); }
       .huis.huis-visual.no-fx .lbl, .huis.huis-visual.no-fx .val { text-shadow: none; }
+      .flow.tall .huis.huis-visual { transform: translate(calc(-100% - 132px), -50%); }
+      .flow.tall .huis-wire { left: calc(50% - 132px); width: 14px; }
       .huis-wire { position: absolute; top: 50%; left: calc(50% - 110px); width: 15px; height: 2px; background: rgba(255,255,255,.12); transform: translateY(-50%); pointer-events: none; z-index: 0; }
       .huis .ic { width: 58px; height: 58px; border-radius: 16px; border: 1.5px solid transparent; display: flex; align-items: center; justify-content: center; }
       .huis .ic ha-icon { --mdc-icon-size: 30px; }
@@ -3007,7 +3189,7 @@ class EnergyFlowPriceCard extends LitElement {
 
 customElements.define("energy-flow-price-card", EnergyFlowPriceCard);
 
-console.info("%c energy-flow-price-card %c v1.13.0-fork ", "background:#7dd3fc;color:#0a1420;font-weight:700", "background:#333;color:#fff");
+console.info("%c energy-flow-price-card %c v1.14.0-fork ", "background:#7dd3fc;color:#0a1420;font-weight:700", "background:#333;color:#fff");
 
 window.customCards = window.customCards || [];
 window.customCards.push({

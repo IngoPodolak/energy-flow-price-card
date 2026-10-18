@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.14.0-fork
+
+- Neues Eingabefeld „Linie ausblenden unter … W“ (`flow_min_power`, Standard 5 W).
+- Geräte werden jetzt alle gleichzeitig angezeigt (`car_mode: row`, neuer Standard): Geräte-Knoten mit Summe unten rechts, darunter jedes Gerät mit eigener animierter Linie. Inaktive Geräte werden ausgeblendet, außer „Leere Zweige anzeigen“ ist an.
+- Tageswerte größer, untereinander und farbig: Symbol „ins Haus“ (grün) bzw. „aus dem Haus“ (orange); Farben einstellbar (`color_day_in`, `color_day_out`).
+- Preisdiagramm: optional Tageshöchst- und Tagestiefstpreis markieren (`price_show_minmax`).
+
 ## v1.13.0-fork (Fork-Anpassungen)
 
 - Flusslinien laufen jetzt in beiden Ansichten nur waagerecht/senkrecht und starten/enden exakt an den Symbolen.

@@ -39,7 +39,7 @@ class EnergyFlowPriceCardEditor extends LitElement {
 
   _resetColors() {
     const next = { ...this._config };
-    ["color_solar", "color_battery", "color_grid", "color_grid_export", "color_car", "color_home"].forEach((k) => { next[k] = DEFAULTS[k]; });
+    ["color_solar", "color_battery", "color_grid", "color_grid_export", "color_car", "color_home", "color_day_in", "color_day_out"].forEach((k) => { next[k] = DEFAULTS[k]; });
     next.price_stops = DEFAULT_PRICE_STOPS.map((s) => ({ ...s }));
     this._emit(next);
   }
@@ -162,6 +162,8 @@ class EnergyFlowPriceCardEditor extends LitElement {
       { key: "color_grid_export", label: T("ed_color_grid_export") },
       { key: "color_car", label: T("ed_color_car") },
       { key: "color_home", label: T("ed_color_home") },
+      { key: "color_day_in", label: T("ed_color_day_in") },
+      { key: "color_day_out", label: T("ed_color_day_out") },
     ];
 
     return html`
@@ -177,6 +179,12 @@ class EnergyFlowPriceCardEditor extends LitElement {
           <ha-formfield label=${T("ed_display_zero")}>
             <ha-switch .checked=${displayZero} @change=${(e) => this._toggle("display_zero", e)}></ha-switch>
           </ha-formfield>
+          <label class="sel-row">
+            <span>${T("ed_flow_min_power")}</span>
+            <span class="numwrap"><input class="num" type="number" min="0" step="1" .value=${String(this._config.flow_min_power ?? 5)}
+              @change=${(e) => { const v = parseFloat(e.target.value); this._emit({ ...this._config, flow_min_power: isNaN(v) ? 5 : Math.max(0, v) }); }} /> W</span>
+          </label>
+          <div class="note">${T("ed_flow_min_power_note")}</div>
           <ha-formfield label=${T("ed_battery_ring")}>
             <ha-switch .checked=${this._config.battery_ring !== false} @change=${(e) => this._toggle("battery_ring", e)}></ha-switch>
           </ha-formfield>
@@ -278,12 +286,12 @@ class EnergyFlowPriceCardEditor extends LitElement {
           </div>
           <label class="sel-row">
             <span>${T("ed_car_display")}</span>
-            <select .value=${this._config.car_mode ?? "scroll"} @change=${(e) => this._emit({ ...this._config, car_mode: e.target.value })}>
-              <option value="scroll">${T("ed_car_scroll")}</option>
-              <option value="merged">${T("ed_car_merged")}</option>
+            <select @change=${(e) => this._emit({ ...this._config, car_mode: e.target.value })}>
+              ${[["row", T("ed_car_row")], ["scroll", T("ed_car_scroll")], ["merged", T("ed_car_merged")]].map(([v, l]) => html`
+                <option value=${v} ?selected=${(this._config.car_mode ?? "row") === v}>${l}</option>`)}
             </select>
           </label>
-          ${(this._config.car_mode ?? "scroll") === "scroll" ? html`
+          ${this._config.car_mode === "scroll" ? html`
             <div class="slider-row">
               <span>${T("ed_car_interval")}: <b>${this._config.car_scroll_interval ?? 5}s</b></span>
               <input type="range" min="2" max="15" step="1" .value=${this._config.car_scroll_interval ?? 5}
@@ -363,6 +371,9 @@ class EnergyFlowPriceCardEditor extends LitElement {
             </div>` : nothing}
           <ha-formfield label=${T("ed_relative_hours")}>
             <ha-switch .checked=${this._config.price_relative_hours === true} @change=${(e) => this._toggle("price_relative_hours", e)}></ha-switch>
+          </ha-formfield>
+          <ha-formfield label=${T("ed_price_minmax")}>
+            <ha-switch .checked=${this._config.price_show_minmax === true} @change=${(e) => this._toggle("price_show_minmax", e)}></ha-switch>
           </ha-formfield>
           <ha-formfield label=${T("ed_day_marker")}>
             <ha-switch .checked=${this._config.price_show_day_marker === true} @change=${(e) => this._toggle("price_show_day_marker", e)}></ha-switch>
@@ -488,6 +499,8 @@ class EnergyFlowPriceCardEditor extends LitElement {
       .reset, .add, .mini { cursor: pointer; border: 1px solid var(--primary-color); background: transparent; color: var(--primary-color); border-radius: 8px; padding: 5px 10px; font-size: 12px; }
       .mini { border-color: var(--error-color, #ef4444); color: var(--error-color, #ef4444); padding: 2px 8px; }
       .add { align-self: flex-start; }
+      .numwrap { display: inline-flex; align-items: center; gap: 6px; }
+      .num { width: 80px; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--divider-color); background: var(--card-background-color); color: var(--primary-text-color); }
       .subblock { display: flex; flex-direction: column; gap: 8px; padding: 8px 0 4px 12px; border-left: 2px solid var(--divider-color); }
       .anchors summary { cursor: pointer; font-size: 13px; padding: 4px 0; }
       .anchor-row { display: grid; grid-template-columns: 1fr; gap: 2px; font-size: 12px; margin: 6px 0; }

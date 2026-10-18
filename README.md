@@ -25,6 +25,11 @@ visual_anchors:                # optional: Linien-Endpunkte im Bild in % (x von 
   battery: { x: 58, y: 63 }
   devices: { x: 76, y: 81 }
 history_range: today           # 1h | 6h | today | 24h | 48h | 7d
+flow_min_power: 5              # W: darunter wird die Linie ausgeblendet
+car_mode: row                  # row = alle Geräte gleichzeitig | scroll | merged
+color_day_in: "#34d399"        # Tageswert ins Haus
+color_day_out: "#fb923c"       # Tageswert aus dem Haus
+price_show_minmax: true        # Tageshöchst-/-tiefstpreis im Preisdiagramm
 show_daily_energy: true
 energy_solar: sensor.solar_energy_today        # optional (kWh), sonst aus dem Verlauf berechnet
 energy_grid_import: sensor.grid_import_total   # optional
