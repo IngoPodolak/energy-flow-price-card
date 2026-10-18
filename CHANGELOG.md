@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.17.1-fork
+
+- Symbole für Tages-Netzbezug und -Einspeisung vertauscht (korrigiert).
+
 ## v1.17.0-fork
 
 - Visuelle Ansicht: Größe des Hausbilds einstellbar (`house_image_scale`, 30–130 %).

@@ -1001,7 +1001,8 @@ class EnergyFlowPriceCard extends LitElement {
       : html`<span class="dic">${renderIcon(base)}</span>`;
     const OUT_OF_NODE = "mdi:arrow-top-right-thick", INTO_NODE = "mdi:arrow-bottom-left-thick";
     const DAY_ICONS = {
-      grid: { in: ["mdi:transmission-tower-import"], out: ["mdi:transmission-tower-export"] },
+      // MDI draws these from the tower's point of view, so they are used crosswise here
+      grid: { in: ["mdi:transmission-tower-export"], out: ["mdi:transmission-tower-import"] },
       battery: { in: ["mdi:battery-arrow-down"], out: ["mdi:battery-arrow-up"] },
       solar: { in: ["mdi:solar-power-variant", OUT_OF_NODE] },
     };
@@ -2134,7 +2135,7 @@ class EnergyFlowPriceCard extends LitElement {
 
 customElements.define("energy-flow-price-card", EnergyFlowPriceCard);
 
-console.info("%c energy-flow-price-card %c v1.17.0-fork ", "background:#7dd3fc;color:#0a1420;font-weight:700", "background:#333;color:#fff");
+console.info("%c energy-flow-price-card %c v1.17.1-fork ", "background:#7dd3fc;color:#0a1420;font-weight:700", "background:#333;color:#fff");
 
 window.customCards = window.customCards || [];
 window.customCards.push({
