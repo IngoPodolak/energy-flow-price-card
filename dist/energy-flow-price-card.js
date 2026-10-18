@@ -145,6 +145,7 @@ const DEFAULTS = {
   energy_battery_mode: "dual",
   solar_forecast: true,     // solar forecast from the HA energy dashboard (Forecast.Solar, Solcast …), if configured there
   solar_forecast_node: true, // also show today's forecast kWh under the solar node
+  price_show_costs: true,   // price chart: costs of the grid import today (and yesterday for windows > 24 h)
   price_axis_auto: true,    // price chart: axis starts just below the lowest price (negative prices supported)
   price_show_minmax: false, // mark each day's highest / lowest price in the price chart
   // "Usage" tab: last-hour power (W) breakdown by source (solar/battery/grid). Reuses the
@@ -443,6 +444,9 @@ const TRANSLATIONS = {
     ed_forecast_note: "Uses the same forecast as the Home Assistant energy dashboard (e.g. Forecast.Solar or Solcast). It must be configured there for your solar panels.",
     ed_forecast_sources: "Forecast sources for this card (with several systems tick only the matching one):",
     ed_price_axis_auto: "Fit axis to the price range (cut off the empty lower part, negative prices supported)",
+    today: "Today",
+    yesterday: "Yesterday",
+    ed_price_costs: "Show electricity costs (grid import) – today, plus yesterday for windows over 24 h",
   },
   nl: {
     solar: "Solar",
@@ -760,6 +764,9 @@ const TRANSLATIONS = {
     ed_forecast_note: "Nutzt dieselbe Prognose wie das Energie-Dashboard von Home Assistant (z. B. Forecast.Solar oder Solcast). Sie muss dort unter Einstellungen → Dashboards → Energie bei der Solaranlage eingetragen sein.",
     ed_forecast_sources: "Prognose-Quellen für diese Karte (bei mehreren Anlagen nur die passende anhaken):",
     ed_price_axis_auto: "Skala an Preisspanne anpassen (unterer Bereich abgeschnitten, negative Preise möglich)",
+    today: "Heute",
+    yesterday: "Gestern",
+    ed_price_costs: "Stromkosten (Netzbezug) anzeigen – heute, bei mehr als 24 h auch gestern",
   },
 };
 
@@ -1263,6 +1270,9 @@ class EnergyFlowPriceCardEditor extends LitElement {
             </div>` : nothing}
           <ha-formfield label=${T("ed_relative_hours")}>
             <ha-switch .checked=${this._config.price_relative_hours === true} @change=${(e) => this._toggle("price_relative_hours", e)}></ha-switch>
+          </ha-formfield>
+          <ha-formfield label=${T("ed_price_costs")}>
+            <ha-switch .checked=${this._config.price_show_costs !== false} @change=${(e) => this._toggle("price_show_costs", e)}></ha-switch>
           </ha-formfield>
           <ha-formfield label=${T("ed_price_axis_auto")}>
             <ha-switch .checked=${this._config.price_axis_auto !== false} @change=${(e) => this._toggle("price_axis_auto", e)}></ha-switch>
@@ -2893,6 +2903,95 @@ class EnergyFlowPriceCard extends LitElement {
     return pts.filter((p) => p.t >= a && p.t < b).reduce((x, p) => x + p.wh, 0) / 1000;
   }
 
+  // ---------------------------------------------------------------------------
+  // Electricity costs: grid import (5-minute means from the recorder statistics, raw
+  // history as fallback) × the price valid at that time. Yesterday's prices come from
+  // the history of the price entity (provider attributes usually start today).
+  // ---------------------------------------------------------------------------
+  async _ensureCostData() {
+    const c = this._config;
+    if (!this.hass?.callWS || c.price_show_costs === false) return;
+    const gs = this._src("grid");
+    if (!gs.entities.length) return;
+    const y0 = startOfToday() - 86400000;
+    const key = gs.entities.join(",") + "|" + (c.price_entity || "") + "|" + y0;
+    const now = Date.now();
+    const old = this._cost;
+    if (old && old.key === key && (old.busy || now - old.fetched < 300000)) return;
+    this._cost = { ...(old && old.key === key ? old : {}), key, busy: true, fetched: now };
+    const startIso = new Date(y0).toISOString();
+    const endIso = new Date(now).toISOString();
+    const grid = {};
+    try {
+      const r = await this.hass.callWS({
+        type: "recorder/statistics_during_period", start_time: startIso, end_time: endIso,
+        statistic_ids: gs.entities, period: "5minute", types: ["mean"],
+      });
+      for (const id of gs.entities) {
+        const f = unitFactor(this.hass.states[id]?.attributes?.unit_of_measurement);
+        const arr = r?.[id];
+        if (Array.isArray(arr) && arr.length) {
+          grid[id] = arr.map((x) => ({ t: typeof x.start === "number" ? x.start : Date.parse(x.start), v: (x.mean || 0) * f, dur: 300000 }));
+        }
+      }
+    } catch (e) { /* fall back to history */ }
+    const missing = gs.entities.filter((id) => !grid[id]);
+    if (missing.length) {
+      try {
+        const res = await this.hass.callApi("GET", `history/period/${startIso}?filter_entity_id=${missing.join(",")}&end_time=${encodeURIComponent(endIso)}&minimal_response&no_attributes`);
+        for (const arr of Array.isArray(res) ? res : []) {
+          if (!Array.isArray(arr) || !arr.length) continue;
+          const id = arr[0].entity_id;
+          const f = unitFactor(this.hass.states[id]?.attributes?.unit_of_measurement);
+          const pts = arr.map((x) => ({ t: Math.max(y0, Date.parse(x.last_changed || x.last_updated)), v: (parseFloat(x.state) || 0) * f }));
+          grid[id] = pts.map((p, i) => ({ ...p, dur: (i + 1 < pts.length ? pts[i + 1].t : now) - p.t }));
+        }
+      } catch (e) { /* no data */ }
+    }
+    let priceHist = [];
+    if (c.price_entity && !c.price_use_tibber_service) {
+      try {
+        const res = await this.hass.callApi("GET", `history/period/${startIso}?filter_entity_id=${c.price_entity}&end_time=${encodeURIComponent(endIso)}&minimal_response&no_attributes`);
+        const arr = Array.isArray(res) && res[0] ? res[0] : [];
+        priceHist = arr.map((x) => ({ t: Math.max(y0, Date.parse(x.last_changed || x.last_updated)), v: normalizePrice(parseFloat(x.state)) }))
+          .filter((p) => !isNaN(p.v) && !isNaN(p.t));
+      } catch (e) { /* no price history */ }
+    }
+    this._cost = { key, busy: false, fetched: Date.now(), grid, priceHist };
+    this.requestUpdate();
+  }
+
+  // { kwh, eur } of grid import for the local day starting at dayStart (null if no data)
+  _costFor(dayStart, pricePoints) {
+    const d = this._cost;
+    if (!d || !d.grid) return null;
+    const gs = this._src("grid");
+    // import power samples (W) with their duration
+    let samples = [];
+    if (gs.dual) samples = (d.grid[gs.pos] || []).map((p) => ({ ...p, v: Math.max(0, Math.abs(p.v)) }));
+    else samples = (d.grid[gs.signed] || []).map((p) => ({ ...p, v: Math.max(0, p.v * gs.sign) }));
+    if (!samples.length) return null;
+    // price lookup: provider list wins where it has data, history of the entity fills the rest
+    const prices = [...(d.priceHist || []), ...(pricePoints || [])].sort((a, b) => a.t - b.t);
+    if (!prices.length) return null;
+    const priceAt = (t) => {
+      let lo = 0, hi = prices.length - 1, best = null;
+      while (lo <= hi) { const m = (lo + hi) >> 1; if (prices[m].t <= t) { best = prices[m]; lo = m + 1; } else hi = m - 1; }
+      return best ? best.v : null;
+    };
+    const dayEnd = Math.min(dayStart + 86400000, Date.now());
+    let kwh = 0, eur = 0, priced = false;
+    for (const p of samples) {
+      const a = Math.max(p.t, dayStart), b = Math.min(p.t + p.dur, dayEnd);
+      if (b <= a || !p.v) continue;
+      const e = (p.v * (b - a)) / 3600000 / 1000;
+      const pr = priceAt(a + (b - a) / 2);
+      kwh += e;
+      if (pr != null) { eur += e * pr; priced = true; }
+    }
+    return priced ? { kwh, eur } : { kwh, eur: null };
+  }
+
   _rangeSpec() {
     const id = this._histRange ?? this._config.history_range ?? "today";
     const r = HISTORY_RANGES.find((x) => x.id === id) || HISTORY_RANGES.find((x) => x.id === "today");
@@ -3353,6 +3452,22 @@ class EnergyFlowPriceCard extends LitElement {
 
     const gasPrice = num(this.hass, c.gas_price_entity);
 
+    // Costs of today's (and for windows over 24 h also yesterday's) grid import.
+    let costChips = nothing;
+    if (c.price_show_costs !== false && this._src("grid").entities.length) {
+      this._ensureCostData();
+      const today = startOfToday();
+      const days = hours > 24 ? [today - 86400000, today] : [today];
+      const fmtEur = (x) => x.toFixed(2).replace(".", ",") + " €";
+      const chips = days.map((d) => {
+        const r = this._costFor(d, allPoints);
+        if (!r) return nothing;
+        const lbl = d === today ? this._t("today") : this._t("yesterday");
+        return html`<span class="now cost" title="${lbl}: ${fmtKWh(r.kwh)} kWh ${this._t("grid_import")}"><ha-icon icon="mdi:cash"></ha-icon>${lbl}: <b>${r.eur != null ? fmtEur(r.eur) : "–"}</b><small>${fmtKWh(r.kwh)} kWh</small></span>`;
+      });
+      costChips = chips;
+    }
+
     return html`
       <div class="chdr">
         <span class="t">${this._t("price_title")} (${hours}h)</span>
@@ -3362,6 +3477,7 @@ class EnergyFlowPriceCard extends LitElement {
             : current !== null
               ? html`<span class="now"><ha-icon icon="mdi:flash"></ha-icon>${this._t("now")}: <b>${current.toFixed(3).replace(".", ",")}</b></span>`
               : nothing}
+          ${costChips}
           ${gasPrice !== null ? html`<span class="now gas"><ha-icon icon="mdi:fire"></ha-icon><b>${gasPrice.toFixed(3).replace(".", ",")}</b></span>` : nothing}
         </div>
       </div>
@@ -3624,9 +3740,12 @@ class EnergyFlowPriceCard extends LitElement {
 
       .chdr { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 10px; }
       .chdr .t { font-size: 13px; font-weight: 600; color: var(--primary-text-color); }
-      .chdr-right { display: flex; align-items: baseline; gap: 12px; }
+      .chdr-right { display: flex; align-items: baseline; gap: 4px 12px; flex-wrap: wrap; justify-content: flex-end; }
       .chdr .now { display: inline-flex; align-items: center; gap: 4px; }
       .chdr .now ha-icon { --mdc-icon-size: 13px; color: var(--info-color, #7dd3fc); }
+      .chdr .now.cost ha-icon { color: var(--success-color, #34d399); }
+      .chdr .now.cost b { color: var(--success-color, #34d399); }
+      .chdr .now.cost small { margin-left: 4px; opacity: .75; font-size: 10.5px; }
       .chdr .now.gas ha-icon { color: var(--warning-color, #f5a623); }
       .chdr .now.gas b { color: var(--warning-color, #f5a623); }
       .tabs { display: flex; gap: 6px; margin-bottom: 8px; overflow-x: auto; scrollbar-width: none; }
@@ -3700,8 +3819,8 @@ class EnergyFlowPriceCard extends LitElement {
 
 customElements.define("energy-flow-price-card", EnergyFlowPriceCard);
 
-window.__EFPC_VERSION = "1.20.0-fork";
-console.info("%c energy-flow-price-card %c v1.20.0-fork ", "background:#7dd3fc;color:#0a1420;font-weight:700", "background:#333;color:#fff");
+window.__EFPC_VERSION = "1.21.0-fork";
+console.info("%c energy-flow-price-card %c v1.21.0-fork ", "background:#7dd3fc;color:#0a1420;font-weight:700", "background:#333;color:#fff");
 
 window.customCards = window.customCards || [];
 window.customCards.push({

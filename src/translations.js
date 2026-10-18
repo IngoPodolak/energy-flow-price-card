@@ -221,6 +221,9 @@ const TRANSLATIONS = {
     ed_forecast_note: "Uses the same forecast as the Home Assistant energy dashboard (e.g. Forecast.Solar or Solcast). It must be configured there for your solar panels.",
     ed_forecast_sources: "Forecast sources for this card (with several systems tick only the matching one):",
     ed_price_axis_auto: "Fit axis to the price range (cut off the empty lower part, negative prices supported)",
+    today: "Today",
+    yesterday: "Yesterday",
+    ed_price_costs: "Show electricity costs (grid import) – today, plus yesterday for windows over 24 h",
   },
   nl: {
     solar: "Solar",
@@ -538,6 +541,9 @@ const TRANSLATIONS = {
     ed_forecast_note: "Nutzt dieselbe Prognose wie das Energie-Dashboard von Home Assistant (z. B. Forecast.Solar oder Solcast). Sie muss dort unter Einstellungen → Dashboards → Energie bei der Solaranlage eingetragen sein.",
     ed_forecast_sources: "Prognose-Quellen für diese Karte (bei mehreren Anlagen nur die passende anhaken):",
     ed_price_axis_auto: "Skala an Preisspanne anpassen (unterer Bereich abgeschnitten, negative Preise möglich)",
+    today: "Heute",
+    yesterday: "Gestern",
+    ed_price_costs: "Stromkosten (Netzbezug) anzeigen – heute, bei mehr als 24 h auch gestern",
   },
 };
 

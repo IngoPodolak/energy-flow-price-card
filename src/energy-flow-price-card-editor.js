@@ -481,6 +481,9 @@ class EnergyFlowPriceCardEditor extends LitElement {
           <ha-formfield label=${T("ed_relative_hours")}>
             <ha-switch .checked=${this._config.price_relative_hours === true} @change=${(e) => this._toggle("price_relative_hours", e)}></ha-switch>
           </ha-formfield>
+          <ha-formfield label=${T("ed_price_costs")}>
+            <ha-switch .checked=${this._config.price_show_costs !== false} @change=${(e) => this._toggle("price_show_costs", e)}></ha-switch>
+          </ha-formfield>
           <ha-formfield label=${T("ed_price_axis_auto")}>
             <ha-switch .checked=${this._config.price_axis_auto !== false} @change=${(e) => this._toggle("price_axis_auto", e)}></ha-switch>
           </ha-formfield>

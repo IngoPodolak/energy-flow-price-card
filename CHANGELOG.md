@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.21.0-fork
+
+- Preisdiagramm: Stromkosten des Netzbezugs neben dem „Jetzt“-Preis – heute, bei mehr als 24 h zusätzlich gestern (`price_show_costs`). Berechnet je 5 Minuten aus Netzbezug × gültigem Preis; Preise von gestern aus dem Verlauf der Preis-Entität.
+
 ## v1.20.0-fork
 
 - Preisdiagramm: Skala passt sich der Preisspanne an (unterer leerer Bereich wird abgeschnitten, runde Teilstriche). Negative Preise werden unterstützt: Null-Linie, Balken zeigen nach unten. Abschaltbar (`price_axis_auto: false`).
