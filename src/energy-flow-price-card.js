@@ -1,5 +1,5 @@
 import { LitElement, html, css, svg, nothing } from "lit";
-import { DEFAULTS, DEFAULT_PRICE_STOPS, PRICE_PROFILES } from "./constants.js";
+import { DEFAULTS, DEFAULT_PRICE_STOPS, PRICE_PROFILES, DEVICE_PRESETS, DEVICE_PALETTE, HISTORY_RANGES, PRICE_RANGES, DEFAULT_ANCHORS } from "./constants.js";
 import { t, resolveLang } from "./translations.js";
 import { VISUAL_HOUSE_IMAGE } from "./assets/visual-house.js";
 import "./energy-flow-price-card-editor.js";
@@ -60,6 +60,31 @@ function fmtPower(w) {
   const a = Math.abs(w);
   if (a >= 1000) return (w / 1000).toFixed(2).replace(".", ",") + " kW";
   return Math.round(w) + " W";
+}
+
+// Unit factor so power is always handled in W (kW / MW sensors are converted).
+function unitFactor(u) {
+  const s = u == null ? "" : String(u).trim();
+  if (s === "kW") return 1000;
+  if (s === "MW") return 1e6;
+  return 1;
+}
+function pw(hass, entity) {
+  const v = num(hass, entity);
+  if (v === null) return null;
+  return v * unitFactor(hass.states[entity]?.attributes?.unit_of_measurement);
+}
+function fmtKWh(kwh) {
+  if (kwh == null || isNaN(kwh)) return "–";
+  return kwh.toFixed(Math.abs(kwh) >= 100 ? 0 : 1).replace(".", ",");
+}
+function polyD(pts) {
+  return pts.map((p, i) => `${i ? "L" : "M"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
+}
+function startOfToday() {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
 }
 
 function hex2rgb(h) {
@@ -137,6 +162,65 @@ function subPathD(pts, dStart, dEnd) {
   return all.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(2)},${p.y.toFixed(2)}`).join(" ");
 }
 
+// Reduce a dense history series to at most ~n points (bucket averages).
+function downsample(pts, start, end, n) {
+  if (pts.length <= n * 1.5) return pts;
+  const span = Math.max(1, end - start);
+  const out = [];
+  let bucket = -1, sum = 0, cnt = 0, t0 = 0;
+  for (const p of pts) {
+    const b = Math.min(n - 1, Math.max(0, Math.floor(((p.t - start) / span) * n)));
+    if (b !== bucket) {
+      if (cnt) out.push({ t: t0, v: sum / cnt });
+      bucket = b; sum = 0; cnt = 0; t0 = p.t;
+    }
+    sum += p.v; cnt++;
+  }
+  if (cnt) out.push({ t: t0, v: sum / cnt });
+  return out;
+}
+
+// Combine several step series into one (e.g. battery net = discharge − charge).
+function mergeSeries(arrs, fn) {
+  if (!arrs.some((a) => a.length)) return [];
+  const times = [...new Set(arrs.flatMap((a) => a.map((p) => p.t)))].sort((a, b) => a - b);
+  const idx = arrs.map(() => 0);
+  const cur = arrs.map(() => 0);
+  return times.map((t) => {
+    arrs.forEach((a, i) => {
+      while (idx[i] < a.length && a[idx[i]].t <= t) { cur[i] = a[idx[i]].v; idx[i]++; }
+    });
+    return { t, v: fn(cur) };
+  });
+}
+
+// X-axis labels for an arbitrary time span, aligned to round local times.
+function timeLabels(startMs, endMs, lang) {
+  const span = Math.max(1, endMs - startMs);
+  const MIN = 60000;
+  const steps = [5, 10, 15, 30, 60, 120, 180, 240, 360, 720, 1440, 2880].map((m) => m * MIN);
+  const step = steps.find((s) => span / s <= 6) || 2880 * MIN;
+  const mid = new Date(startMs);
+  mid.setHours(0, 0, 0, 0);
+  const base = mid.getTime();
+  const out = [];
+  for (let t = base + Math.ceil((startMs - base) / step) * step; t <= endMs; t += step) {
+    const d = new Date(t);
+    const frac = (t - startMs) / span;
+    if (frac > 0.86) break;
+    let text;
+    if (step >= 1440 * MIN || (span > 86400000 && d.getHours() === 0 && d.getMinutes() === 0)) {
+      text = d.toLocaleDateString(lang, { weekday: "short" });
+    } else {
+      text = d.getHours() + ":" + String(d.getMinutes()).padStart(2, "0");
+    }
+    out.push({ frac, text });
+  }
+  const now = new Date(endMs);
+  out.push({ frac: 1, text: now.getHours() + ":" + String(now.getMinutes()).padStart(2, "0") });
+  return out;
+}
+
 class EnergyFlowPriceCard extends LitElement {
   static get properties() {
     return { hass: {}, _config: {} };
@@ -193,7 +277,7 @@ class EnergyFlowPriceCard extends LitElement {
     if (v.charge !== null) h -= v.charge;
     if (this._config.include_car_in_home) {
       for (const car of this._cars()) {
-        const p = num(this.hass, car.power);
+        const p = pw(this.hass, car.power);
         if (p !== null) h -= p;
       }
     }
@@ -385,69 +469,295 @@ class EnergyFlowPriceCard extends LitElement {
     `;
   }
 
+  // ---------------------------------------------------------------------------
+  // Devices (formerly "cars"). The config key stays `cars` so existing dashboards keep
+  // working; each entry may now carry `type` (preset id), `icon`, `color` and `energy`.
+  // ---------------------------------------------------------------------------
+  _devices() {
+    return this._cars().map((d) => ({ ...d, type: d.type || "car" }));
+  }
+
+  _deviceIcon(d) {
+    if (d.icon) return d.icon;
+    const p = DEVICE_PRESETS.find((x) => x.id === d.type);
+    return p ? p.icon : "mdi:car-electric";
+  }
+
+  // Which corner each node sits in. Default in this fork: grid top-left, solar top-right.
+  _positions() {
+    const solarRight = this._config.solar_position !== "left";
+    return { grid: solarRight ? "tl" : "tr", solar: solarRight ? "tr" : "tl", battery: "bl", devices: "br" };
+  }
+
+  _anchor(key, side) {
+    const a = this._config.visual_anchors?.[key];
+    if (a && a.x != null && a.y != null) return { x: +a.x, y: +a.y };
+    if (key === "grid") return side === "left" ? DEFAULT_ANCHORS.grid_left : DEFAULT_ANCHORS.grid_right;
+    return DEFAULT_ANCHORS[key];
+  }
+
+  _houseImage() {
+    const c = this._config;
+    const ent = c.house_image_entity && this.hass?.states?.[c.house_image_entity];
+    const pic = ent?.attributes?.entity_picture;
+    if (pic) return pic;
+    if (c.house_image_url) return c.house_image_url;
+    return VISUAL_HOUSE_IMAGE;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Today's energy per node (kWh). Either from an optional energy entity (via the
+  // recorder statistics "change" of today) or integrated from the power history.
+  // ---------------------------------------------------------------------------
+  async _ensureDayEnergy() {
+    const c = this._config;
+    if (!this.hass || c.show_daily_energy === false || !this.hass.callApi) return;
+    const devs = this._devices();
+    const powers = [...new Set([c.solar_power, c.grid_power, c.battery_charge_power, c.battery_discharge_power, ...devs.map((d) => d.power)].filter(Boolean))];
+    const energies = [...new Set([c.energy_solar, c.energy_grid_import, c.energy_grid_export, c.energy_battery_charge, c.energy_battery_discharge, ...devs.map((d) => d.energy)].filter(Boolean))];
+    const midnight = startOfToday();
+    const key = powers.join(",");
+    if (!this._day || this._day.midnight !== midnight || this._day.key !== key) {
+      this._day = { midnight, key, acc: {}, fetchedTo: midnight, lastFetch: 0, busy: false };
+    }
+    const d = this._day;
+    const now = Date.now();
+    if (powers.length && !d.busy && now - d.lastFetch > 60000) {
+      d.busy = true;
+      d.lastFetch = now;
+      try {
+        const url = `history/period/${new Date(d.fetchedTo).toISOString()}?filter_entity_id=${powers.join(",")}` +
+          `&end_time=${encodeURIComponent(new Date(now).toISOString())}&minimal_response&no_attributes`;
+        const res = await this.hass.callApi("GET", url);
+        if (this._day === d) {
+          for (const arr of Array.isArray(res) ? res : []) {
+            if (!Array.isArray(arr) || !arr.length) continue;
+            const id = arr[0].entity_id;
+            const f = unitFactor(this.hass.states[id]?.attributes?.unit_of_measurement);
+            const st = d.acc[id] || (d.acc[id] = { lastT: null, lastV: 0, pos: 0, neg: 0 });
+            for (const s of arr) {
+              const t = Date.parse(s.last_changed || s.last_updated);
+              let val = parseFloat(s.state);
+              val = isNaN(val) ? 0 : val * f;
+              if (isNaN(t)) continue;
+              if (st.lastT === null) { st.lastT = Math.max(t, midnight); st.lastV = val; continue; }
+              if (t <= st.lastT) { st.lastV = val; continue; }
+              const e = (st.lastV * (t - st.lastT)) / 3600000;
+              if (e > 0) st.pos += e; else st.neg -= e;
+              st.lastT = t;
+              st.lastV = val;
+            }
+          }
+          d.fetchedTo = now;
+        }
+      } catch (e) {
+        /* keep what we have */
+      } finally {
+        d.busy = false;
+        this.requestUpdate();
+      }
+    }
+    // Energy entities: today's change from the long-term statistics.
+    this._dayStats = this._dayStats || {};
+    for (const id of energies) {
+      const s = this._dayStats[id];
+      if (s && (s.busy || now - s.fetched < 120000) && s.midnight === midnight) continue;
+      this._dayStats[id] = { ...(s || {}), busy: true, fetched: now, midnight };
+      (async () => {
+        let v = null;
+        try {
+          const r = await this.hass.callWS({
+            type: "recorder/statistic_during_period",
+            statistic_id: id,
+            calendar: { period: "day" },
+            types: ["change"],
+            units: { energy: "kWh" },
+          });
+          if (r && typeof r.change === "number") v = r.change;
+        } catch (e) { /* fall back below */ }
+        if (v === null) {
+          // e.g. a daily utility_meter without statistics: use its state directly
+          const st = this.hass.states[id];
+          const raw = st ? parseFloat(st.state) : NaN;
+          if (!isNaN(raw)) {
+            const u = st.attributes?.unit_of_measurement;
+            v = u === "Wh" ? raw / 1000 : u === "MWh" ? raw * 1000 : raw;
+          }
+        }
+        this._dayStats[id] = { v, busy: false, fetched: Date.now(), midnight };
+        this.requestUpdate();
+      })();
+    }
+  }
+
+  _dayIntegral(entity) {
+    const st = this._day?.acc?.[entity];
+    if (!st || st.lastT == null) return null;
+    let pos = st.pos, neg = st.neg;
+    const cur = pw(this.hass, entity);
+    const v = cur ?? st.lastV ?? 0;
+    const e = (v * Math.max(0, Date.now() - st.lastT)) / 3600000;
+    if (e > 0) pos += e; else neg -= e;
+    return { pos: pos / 1000, neg: neg / 1000 };
+  }
+
+  _daily(devs) {
+    const c = this._config;
+    if (c.show_daily_energy === false) return null;
+    this._ensureDayEnergy();
+    const I = (e) => (e ? this._dayIntegral(e) : null);
+    const pick = (energyEnt, integ, field) => {
+      if (energyEnt) return this._dayStats?.[energyEnt]?.v ?? null;
+      return integ ? integ[field] : null;
+    };
+    const grid = I(c.grid_power);
+    const r = {
+      solar: pick(c.energy_solar, I(c.solar_power), "pos"),
+      gridIn: pick(c.energy_grid_import, grid, "pos"),
+      gridOut: pick(c.energy_grid_export, grid, "neg"),
+      battOut: pick(c.energy_battery_discharge, I(c.battery_discharge_power), "pos"),
+      battIn: pick(c.energy_battery_charge, I(c.battery_charge_power), "pos"),
+      devices: devs.map((d) => pick(d.energy, I(d.power), "pos")),
+    };
+    const parts = [r.solar, r.gridIn, r.battOut, r.gridOut, r.battIn];
+    if (parts.some((x) => x != null)) {
+      let h = (r.solar || 0) + (r.gridIn || 0) + (r.battOut || 0) - (r.gridOut || 0) - (r.battIn || 0);
+      if (c.include_car_in_home) for (const x of r.devices) h -= x || 0;
+      r.home = Math.max(0, h);
+    } else r.home = null;
+    return r;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Tap / long-press on a node.
+  // ---------------------------------------------------------------------------
+  _pDown(ev, key) {
+    if (ev.button != null && ev.button !== 0) return;
+    clearTimeout(this._holdTimer);
+    this._press = { key, x: ev.clientX, y: ev.clientY, held: false };
+    this._holdTimer = setTimeout(() => {
+      if (this._press && this._press.key === key) {
+        this._press.held = true;
+        this._doAction(key, "hold");
+      }
+    }, 500);
+  }
+  _pMove(ev) {
+    if (this._press && Math.hypot(ev.clientX - this._press.x, ev.clientY - this._press.y) > 12) {
+      clearTimeout(this._holdTimer);
+      this._press = null;
+    }
+  }
+  _pUp(ev, key) {
+    clearTimeout(this._holdTimer);
+    const p = this._press;
+    this._press = null;
+    if (!p || p.key !== key || p.held) return;
+    this._doAction(key, "tap");
+  }
+  _pCancel() {
+    clearTimeout(this._holdTimer);
+    this._press = null;
+  }
+  _nodeEvents(key) {
+    return {
+      down: (e) => this._pDown(e, key),
+      up: (e) => this._pUp(e, key),
+      move: (e) => this._pMove(e),
+      cancel: () => this._pCancel(),
+    };
+  }
+
+  _doAction(key, kind) {
+    const c = this._config;
+    const action = kind === "hold" ? (c.hold_action ?? "more-info") : (c.tap_action ?? "graph");
+    if (action === "none") return;
+    if (action === "graph") {
+      const tab = { grid: "grid", solar: "solar", battery: c.battery_soc ? "accu" : "usage", home: "usage", devices: "devices" }[key];
+      if (c.show_price && this._chartTabs().some((t) => t.id === tab)) {
+        this._setChartMode(tab, true);
+        const el = this.renderRoot?.querySelector?.(".price");
+        if (el && el.scrollIntoView) {
+          const r = el.getBoundingClientRect();
+          if (r.top > window.innerHeight || r.bottom < 0) el.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        }
+        return;
+      }
+      // no matching chart -> fall back to the detail dialog
+    }
+    const ent = this._nodeEntity(key);
+    if (!ent) return;
+    this.dispatchEvent(new CustomEvent("hass-more-info", { detail: { entityId: ent }, bubbles: true, composed: true }));
+  }
+
+  _nodeEntity(key) {
+    const c = this._config;
+    if (key === "grid") return c.grid_power || c.energy_grid_import;
+    if (key === "solar") return c.solar_power || c.energy_solar;
+    if (key === "battery") return c.battery_soc || c.battery_charge_power || c.battery_discharge_power;
+    if (key === "devices") {
+      const devs = this._devices().filter((d) => d.power || d.soc);
+      if (!devs.length) return null;
+      const d = devs[(this._carScrollIdx || 0) % devs.length];
+      return (c.car_mode === "merged" ? devs[0] : d).power || d.soc;
+    }
+    return null;
+  }
+
   _renderFlow() {
     const c = this._config;
+    const hass = this.hass;
     const v = {
-      solar: num(this.hass, c.solar_power),
-      grid: num(this.hass, c.grid_power),
-      charge: num(this.hass, c.battery_charge_power),
-      discharge: num(this.hass, c.battery_discharge_power),
-      soc: num(this.hass, c.battery_soc),
+      solar: pw(hass, c.solar_power),
+      grid: pw(hass, c.grid_power),
+      charge: pw(hass, c.battery_charge_power),
+      discharge: pw(hass, c.battery_discharge_power),
+      soc: num(hass, c.battery_soc),
     };
     const home = this._homePower(v);
 
     const battValue = (v.charge && v.charge > 5) ? v.charge : (v.discharge && v.discharge > 5) ? v.discharge : (v.charge ?? v.discharge);
     const battLabel = v.charge && v.charge > 5 ? this._t("charging") : v.discharge && v.discharge > 5 ? this._t("discharging") : "";
-
     const gridLabel = v.grid === null ? "" : v.grid < 0 ? this._t("export") : this._t("import");
-
-    const showZero = c.display_zero;
     const act = (val) => val !== null && Math.abs(val) > 5;
 
-    const solarActive = act(v.solar);
-    const gridActive = act(v.grid);
-    const battActive = act(v.charge) || act(v.discharge);
-
-    // Which entities are configured at all
     const solarHasEnt = !!c.solar_power;
     const gridHasEnt = !!c.grid_power;
     const battHasEnt = !!(c.battery_charge_power || c.battery_discharge_power);
 
-    // All four nodes are always shown. A node is "muted" (grey) when its
-    // entity is not configured. Colored when configured.
     const GREY = "#6b7280";
     const solarCol = solarHasEnt ? c.color_solar : GREY;
     const gridCol = gridHasEnt ? c.color_grid : GREY;
     const battCol = battHasEnt ? c.color_battery : GREY;
-    const carCol = c.color_car;
 
-    // Cars. A car with a "charging" (on/off) entity configured can detect a guest
-    // vehicle: if its charger is drawing power but that entity says off, the power
-    // isn't going into the configured car — show a separate "Guest car" node instead
-    // (appears only while that's happening, disappears once the guest stops charging).
-    const guestCars = [];
-    const cars = this._cars().map((car, i) => {
-      const p = num(this.hass, car.power);
-      const soc = num(this.hass, car.soc);
+    // Devices. A car with a "charging" (on/off) entity can detect a guest vehicle (see original).
+    const devs = this._devices();
+    const daily = this._daily(devs);
+    const guests = [];
+    const items = devs.map((d, i) => {
+      const p = pw(hass, d.power);
+      const soc = d.type === "car" ? num(hass, d.soc) : null;
       const powerActive = act(p);
-      const chargingState = car.charging ? this.hass.states?.[car.charging]?.state : null;
-      const isGuest = !!car.charging && powerActive && chargingState !== "on";
+      const chargingState = d.charging ? hass.states?.[d.charging]?.state : null;
+      const isGuest = d.type === "car" && !!d.charging && powerActive && chargingState !== "on";
       if (isGuest) {
-        guestCars.push({ name: this._t("guest_car"), power: p, soc: null, active: true, hasEnt: true });
+        guests.push({ name: this._t("guest_car"), power: p, soc: null, active: true, hasEnt: true, icon: "mdi:car-electric", isCar: true, day: null });
       }
       return {
-        name: car.name || `${this._t("car")} ${i + 1}`,
+        name: d.name || `${this._t("dev_" + d.type) || this._t("car")} ${i + 1}`,
         power: isGuest ? 0 : p,
         soc,
         active: isGuest ? false : powerActive,
-        hasEnt: !!car.power,
+        hasEnt: !!d.power,
+        icon: this._deviceIcon(d),
+        isCar: d.type === "car",
+        color: d.color,
+        day: daily ? daily.devices[i] : null,
       };
     });
-    const allCars = [...cars, ...guestCars];
-    const anyCarActive = allCars.some((c2) => c2.active);
-    const carHasEnt = allCars.some((c2) => c2.hasEnt);
-    // Always show at least one car node; if none added, show a single placeholder.
-    const carsShown = allCars.length ? allCars : [{ name: this._t("car"), power: null, soc: null, active: false, hasEnt: false }];
+    const allDevs = [...items, ...guests];
+    const devHasEnt = allDevs.some((x) => x.hasEnt);
+    const devsShown = allDevs.length ? allDevs : [{ name: this._t("devices"), power: null, soc: null, active: false, hasEnt: false, icon: "mdi:power-plug", isCar: false, day: null }];
 
     const bs = (() => {
       const r = 23, circ = 2 * Math.PI * r;
@@ -455,115 +765,95 @@ class EnergyFlowPriceCard extends LitElement {
       return { circ, offset: circ * (1 - pct) };
     })();
 
-    // House square center in the 720x190 viewBox. Lowered a bit.
-    // Icon ~58px; horizontal half-width in viewBox units ≈ 34.
-    const HX = 360, HY = 104;          // vertical center of the house square (lowered)
-    const HL = HX - 34, HR = HX + 34;  // left / right edge of the square
-
-    // Visual layout: an actual house photo replaces the abstract square. It's drawn as a
-    // centered 190x190 sub-region of this same 720x190 viewBox (matching HX), so each wire
-    // can aim at a specific spot on the picture (solar panels / battery box / car) instead
-    // of the shared square edge used by the abstract layout.
     const visual = !!c.use_visual_layout;
-    const VX = HX - 95, VY = 0, VS = 190;
-    const visPt = (px, py) => ({ x: VX + (px / 100) * VS, y: VY + (py / 100) * VS });
-    const EP = {
-      solar: visual ? visPt(46, 31) : { x: HL, y: HY },
-      grid: visual ? visPt(80, 40) : { x: HR, y: HY },
-      battery: visual ? visPt(58, 63) : { x: HL, y: HY },
-      car: visual ? visPt(76, 81) : { x: HR, y: HY },
-    };
-    // Wire icon-side start points. In visual mode these sit above/below the whole
-    // icon+text block and further out horizontally, so lines don't cross the photo's
-    // wattage text. The abstract layout's smooth curve doesn't have that problem, so it
-    // keeps its original, closer-to-the-icon start points.
-    const TOP_Y = visual ? 4 : 52;
-    const IX_L = visual ? 110 : 70, IX_R = visual ? 610 : 650;
-    // Battery and car share one horizontal height, just like solar/grid share TOP_Y.
-    const BOT_Y_BATT = visual ? 186 : 138;
-    const BOT_Y_CAR = visual ? 186 : 138;
-    // Solar/battery share one vertical bend line, and grid/car share another, so the
-    // top and bottom line on each side are true mirror images of each other — only a
-    // short final jog reaches each anchor's own slightly different spot on the photo.
-    const FX_L = visual ? (EP.solar.x + EP.battery.x) / 2 : HL;
-    const FX_R = visual ? (EP.grid.x + EP.car.x) / 2 : HR;
-    const huisLeftPct = 50;
+    const reduceEffects = !!c.reduce_effects;
+    const pos = this._positions();
+    const sideOf = (k) => (pos[k][1] === "l" ? "left" : "right");
+    const isTop = (k) => pos[k][0] === "t";
+    const arrowToHouse = (k) => (sideOf(k) === "left" ? "→" : "←");
+    const arrowFromHouse = (k) => (sideOf(k) === "left" ? "←" : "→");
 
-    // Per-wire animation states
-    const solarPow = v.solar;
-    const gridPow = v.grid;
+    // Wire power / direction (reversed = flowing from the house to the node).
     const battPow = v.charge && v.charge > 5 ? v.charge : (v.discharge && v.discharge > 5 ? v.discharge : 0);
-    const carPow = (() => { let m = 0; for (const c2 of allCars) { if (c2.active && Math.abs(c2.power) > m) m = Math.abs(c2.power); } return m; })();
+    const devPow = (() => { let m = 0; for (const x of allDevs) { if (x.active && Math.abs(x.power) > m) m = Math.abs(x.power); } return m; })();
+    const ws = {
+      solar: this._wireState("solar", v.solar, false),
+      grid: this._wireState("grid", v.grid, v.grid < 0),
+      battery: this._wireState("batt", battPow, !!(v.charge && v.charge > 5)),
+      devices: this._wireState("car", devPow, true),
+    };
+    if (Object.values(ws).some((w) => w.show)) this._scheduleFlowTick();
 
-    const wSolar = this._wireState("solar", solarPow, false);
-    const wGrid = this._wireState("grid", gridPow, gridPow < 0);
-    const wBatt = this._wireState("batt", battPow, v.charge && v.charge > 5);
-    const wCar = this._wireState("car", carPow, true);
-    if (wSolar.show || wGrid.show || wBatt.show || wCar.show) this._scheduleFlowTick();
+    // ---- wire geometry, in real pixels of the measured flow box ----
+    // Every wire is made of horizontal and vertical segments only.
+    const g = this._geo;
+    const W = g?.W || 0, H = g?.H || 190;
+    const wirePts = {};
+    if (W && g.home) {
+      if (!visual) {
+        // Abstract layout: down (or up) from the icon, then straight into the house square.
+        const hb = g.home;
+        for (const k of ["grid", "solar", "battery", "devices"]) {
+          const a = g[k];
+          if (!a) continue;
+          const top = isTop(k);
+          const left = sideOf(k) === "left";
+          const y = top ? hb.cy - 12 : hb.cy + 12;
+          const xEnd = left ? hb.left - 1 : hb.right + 1;
+          const yStart = top ? a.bottom + 4 : a.top - 4;
+          wirePts[k] = [{ x: a.cx, y: yStart }, { x: a.cx, y }, { x: xEnd, y }];
+        }
+      } else {
+        // Visual layout: along the top/bottom edge, down a shared bend line, into the photo.
+        const pic = g.pic && g.pic.width ? g.pic : { left: W / 2 - 95, top: 0, width: 190, height: 190 };
+        const visPt = (p) => ({ x: pic.left + (p.x / 100) * pic.width, y: pic.top + (p.y / 100) * pic.height });
+        const EP = {};
+        for (const k of ["grid", "solar", "battery", "devices"]) EP[k] = visPt(this._anchor(k, sideOf(k)));
+        const keysOn = (side) => ["grid", "solar", "battery", "devices"].filter((k) => sideOf(k) === side);
+        const frame = {};
+        for (const side of ["left", "right"]) {
+          const ks = keysOn(side);
+          frame[side] = ks.reduce((s, k) => s + EP[k].x, 0) / (ks.length || 1);
+        }
+        for (const k of ["grid", "solar", "battery", "devices"]) {
+          const a = g[k];
+          if (!a) continue;
+          const left = sideOf(k) === "left";
+          const iconX = left ? a.right + 8 : a.left - 8;
+          const iconY = isTop(k) ? 4 : H - 4;
+          const fx = frame[sideOf(k)];
+          wirePts[k] = [{ x: iconX, y: iconY }, { x: fx, y: iconY }, { x: fx, y: EP[k].y }, { x: EP[k].x, y: EP[k].y }];
+        }
+      }
+    }
 
     const neon = c.wire_style === "neon";
-    // Neon: a calm grey base wire (same as the dashed style), with an occasional glowing
-    // pulse sweeping along it in the direction of actual flow (short dash + long gap).
-    // Speed isn't set via animation-duration here (rewriting that on every power change
-    // restarts the animation from 0%); instead the CSS animation runs at a fixed base
-    // duration and `updated()` retunes its playbackRate live, so a wire that changes
-    // power every second speeds up/slows down smoothly instead of visibly resetting.
-    const reduceEffects = !!c.reduce_effects;
     const liveStyle = (st, color) => {
       const glow = neon && !reduceEffects ? `filter:drop-shadow(0 0 2px ${color}) drop-shadow(0 0 6px ${color});` : "";
       return `stroke:${color};${glow}${st.moving ? "" : "animation-play-state:paused;"}`;
     };
     const liveClass = (st) => `live ${neon ? "neon" : "dashed"}${st.fade === "in" ? " fade-in" : ""}${st.fade === "out" ? " fade-out" : ""}${st.moving ? "" : " still"}${st.dirSwap ? " dir-swap" : ""}`;
 
-    // Visual-mode wires run in clean horizontal/vertical segments via a shared bend
-    // line (frameX) — a photo reads better with straight "circuit style" connectors,
-    // and sharing the bend keeps the top/bottom line on each side true mirror images.
-    // The abstract layout keeps its smooth curve. `reversed` traces the SAME physical
-    // line backwards (same corners) so the dim base wire and the live overlay always
-    // stay perfectly aligned — only the flow animation's apparent direction changes.
-    const elbowD = (iconX, iconY, ep, frameX, reversed) => {
-      const pts = [{ x: iconX, y: iconY }, { x: frameX, y: iconY }, { x: frameX, y: ep.y }, { x: ep.x, y: ep.y }];
-      const p = reversed ? [...pts].reverse() : pts;
-      return `M${p[0].x},${p[0].y} L${p[1].x},${p[1].y} L${p[2].x},${p[2].y} L${p[3].x},${p[3].y}`;
-    };
-    const wireD = (iconX, iconY, ep, frameX, curveCtrlX, reversed) => visual
-      ? elbowD(iconX, iconY, ep, frameX, reversed)
-      : (reversed ? `M${ep.x},${ep.y} Q${curveCtrlX},${HY} ${iconX},${iconY}` : `M${iconX},${iconY} Q${curveCtrlX},${HY} ${ep.x},${ep.y}`);
-
-    // The base wire fades in from the icon end and out again near the house. In visual
-    // mode this is computed along the wire's real (bent) arc length so the fade sits at
-    // the actual tips instead of drifting into the bend on longer runs; the abstract
-    // layout's smooth curve has no sharp corner, so a simple straight-line gradient is
-    // used there instead.
+    // Dim base wire that fades in/out at both tips (measured along the bent path).
     const gradId = (name) => `efp-fade-${name}-${this._uid}`;
-    const FADE_LEN = 40;
-    const baseWire = (name, iconX, iconY, ep, frameX, curveCtrlX) => {
-      if (!visual) {
-        const id = gradId(name);
-        return {
-          defs: svg`<linearGradient id="${id}" gradientUnits="userSpaceOnUse" x1="${iconX}" y1="${iconY}" x2="${ep.x}" y2="${ep.y}">
-            <stop offset="0" stop-color="#fff" stop-opacity="0"></stop>
-            <stop offset="0.12" stop-color="#fff" stop-opacity="0.07"></stop>
-            <stop offset="0.94" stop-color="#fff" stop-opacity="0.07"></stop>
-            <stop offset="1" stop-color="#fff" stop-opacity="0"></stop>
-          </linearGradient>`,
-          path: svg`<path class="wire" style="stroke:url(#${id})" d="M${iconX},${iconY} Q${curveCtrlX},${HY} ${ep.x},${ep.y}"></path>`,
-        };
-      }
-      const pts = [{ x: iconX, y: iconY }, { x: frameX, y: iconY }, { x: frameX, y: ep.y }, { x: ep.x, y: ep.y }];
+    const FADE_LEN = 30;
+    const baseWire = (name, pts) => {
+      if (!pts) return { defs: nothing, path: nothing };
       const total = polyLen(pts);
+      if (total < 2) return { defs: nothing, path: nothing };
       const fl = Math.min(FADE_LEN, total / 2);
       const aEnd = polyPointAt(pts, fl);
       const bStart = polyPointAt(pts, total - fl);
+      const last = pts[pts.length - 1];
       const idIn = gradId(name + "-in"), idOut = gradId(name + "-out");
       return {
         defs: svg`
-          <linearGradient id="${idIn}" gradientUnits="userSpaceOnUse" x1="${pts[0].x}" y1="${pts[0].y}" x2="${aEnd.x}" y2="${aEnd.y}">
+          <linearGradient id="${idIn}" gradientUnits="userSpaceOnUse" x1="${pts[0].x}" y1="${pts[0].y}" x2="${aEnd.x + 0.01}" y2="${aEnd.y + 0.01}">
             <stop offset="0" stop-color="#fff" stop-opacity="0"></stop>
-            <stop offset="1" stop-color="#fff" stop-opacity="0.07"></stop>
+            <stop offset="1" stop-color="#fff" stop-opacity="0.09"></stop>
           </linearGradient>
-          <linearGradient id="${idOut}" gradientUnits="userSpaceOnUse" x1="${bStart.x}" y1="${bStart.y}" x2="${pts[3].x}" y2="${pts[3].y}">
-            <stop offset="0" stop-color="#fff" stop-opacity="0.07"></stop>
+          <linearGradient id="${idOut}" gradientUnits="userSpaceOnUse" x1="${bStart.x}" y1="${bStart.y}" x2="${last.x + 0.01}" y2="${last.y + 0.01}">
+            <stop offset="0" stop-color="#fff" stop-opacity="0.09"></stop>
             <stop offset="1" stop-color="#fff" stop-opacity="0"></stop>
           </linearGradient>`,
         path: svg`
@@ -572,135 +862,169 @@ class EnergyFlowPriceCard extends LitElement {
           <path class="wire" style="stroke:url(#${idOut})" d="${subPathD(pts, total - fl, total)}"></path>`,
       };
     };
-    const wSolarBase = baseWire("solar", IX_L, TOP_Y, EP.solar, FX_L, 220);
-    const wGridBase = baseWire("grid", IX_R, TOP_Y, EP.grid, FX_R, 500);
-    const wBattBase = baseWire("battery", IX_L, BOT_Y_BATT, EP.battery, FX_L, 220);
-    const wCarBase = baseWire("car", IX_R, BOT_Y_CAR, EP.car, FX_R, 500);
+    const liveD = (pts, reversed) => polyD(reversed ? [...pts].reverse() : pts);
+    const wireColor = { solar: c.color_solar, grid: c.color_grid, battery: c.color_battery, devices: c.color_car };
+    const wireKeys = ["grid", "solar", "battery", "devices"];
+    const bases = Object.fromEntries(wireKeys.map((k) => [k, baseWire(k, wirePts[k])]));
+
+    const dayLine = (txt) => (daily && txt ? html`<span class="day">${txt}</span>` : nothing);
+    const kwh = (x) => (x == null ? null : fmtKWh(x));
+    const gridDay = daily && (daily.gridIn != null || daily.gridOut != null)
+      ? `${arrowToHouse("grid")} ${kwh(daily.gridIn) ?? "–"}  ${arrowFromHouse("grid")} ${kwh(daily.gridOut) ?? "–"} kWh` : "";
+    const battDay = daily && (daily.battOut != null || daily.battIn != null)
+      ? `${arrowToHouse("battery")} ${kwh(daily.battOut) ?? "–"}  ${arrowFromHouse("battery")} ${kwh(daily.battIn) ?? "–"} kWh` : "";
+    const solarDay = daily && daily.solar != null ? `${arrowToHouse("solar")} ${kwh(daily.solar)} kWh` : "";
+    const homeDay = daily && daily.home != null ? `Σ ${kwh(daily.home)} kWh` : "";
+
+    const node = (k, muted, inner, extraCls = "") => {
+      const ev = this._nodeEvents(k);
+      return html`<div class="node ${pos[k]} ${extraCls} ${muted ? "muted" : ""}"
+        @pointerdown=${ev.down} @pointerup=${ev.up} @pointermove=${ev.move}
+        @pointerleave=${ev.cancel} @pointercancel=${ev.cancel}
+        @contextmenu=${(e) => e.preventDefault()}>${inner}</div>`;
+    };
+    const squareIcon = (k, icon, col) => html`
+      <div class="ic" data-anc="${k}" style="color:${col};border-color:${col}66;background:${col}22">
+        <ha-icon icon="${icon}"></ha-icon>
+      </div>`;
+
+    const homeEv = this._nodeEvents("home");
 
     return html`
-      <div class="flow">
-        ${visual ? html`<img class="housepic" src="${VISUAL_HOUSE_IMAGE}" alt="" />` : nothing}
-        <svg class="wires" viewBox="0 0 720 190" preserveAspectRatio="none">
-          <defs>
-            ${wSolarBase.defs}${wGridBase.defs}${wBattBase.defs}${wCarBase.defs}
-          </defs>
-          ${wSolarBase.path}
-          ${wSolar.show ? svg`<path class="${liveClass(wSolar)}" style="${liveStyle(wSolar, c.color_solar)}" data-speed="${wSolar.duration}" d="${wireD(IX_L, TOP_Y, EP.solar, FX_L, 220, false)}"></path>` : nothing}
-
-          ${wGridBase.path}
-          ${wGrid.show ? svg`<path class="${liveClass(wGrid)}" style="${liveStyle(wGrid, c.color_grid)}" data-speed="${wGrid.duration}" d="${wireD(IX_R, TOP_Y, EP.grid, FX_R, 500, wGrid.reversed)}"></path>` : nothing}
-
-          ${wBattBase.path}
-          ${wBatt.show ? svg`<path class="${liveClass(wBatt)}" style="${liveStyle(wBatt, c.color_battery)}" data-speed="${wBatt.duration}" d="${wireD(IX_L, BOT_Y_BATT, EP.battery, FX_L, 220, wBatt.reversed)}"></path>` : nothing}
-
-          ${wCarBase.path}
-          ${wCar.show ? svg`<path class="${liveClass(wCar)}" style="${liveStyle(wCar, c.color_car)}" data-speed="${wCar.duration}" d="${wireD(IX_R, BOT_Y_CAR, EP.car, FX_R, 500, true)}"></path>` : nothing}
+      <div class="flow ${visual ? "visual" : ""}">
+        ${visual ? html`<img class="housepic" data-anc="pic" src="${this._houseImage()}" alt="" @load=${() => this._measure(true)} />` : nothing}
+        <svg class="wires" viewBox="0 0 ${W || 1} ${H}" preserveAspectRatio="none">
+          <defs>${wireKeys.map((k) => bases[k].defs)}</defs>
+          ${wireKeys.map((k) => {
+            const pts = wirePts[k];
+            if (!pts) return nothing;
+            const st = ws[k];
+            return svg`${bases[k].path}
+              ${st.show ? svg`<path class="${liveClass(st)}" style="${liveStyle(st, wireColor[k])}" data-speed="${st.duration}" d="${liveD(pts, st.reversed)}"></path>` : nothing}`;
+          })}
         </svg>
 
-        <div class="node tl ${solarHasEnt ? "" : "muted"}">
-          <div class="ic" style="color:${solarCol};border-color:${solarCol}66;background:${solarCol}22">
-            <ha-icon icon="mdi:solar-power-variant"></ha-icon>
-          </div>
-          <div class="txt"><span class="lbl">${this._t("solar")}</span><span class="val" style="color:${solarCol}">${fmtPower(v.solar)}</span></div>
-        </div>
+        ${node("solar", !solarHasEnt, html`
+          ${squareIcon("solar", "mdi:solar-power-variant", solarCol)}
+          <div class="txt"><span class="lbl">${this._t("solar")}</span><span class="val" style="color:${solarCol}">${fmtPower(v.solar)}</span>${dayLine(solarDay)}</div>`)}
 
-        <div class="node tr ${gridHasEnt ? "" : "muted"}">
-          <div class="ic" style="color:${gridCol};border-color:${gridCol}66;background:${gridCol}22">
-            <ha-icon icon="mdi:transmission-tower"></ha-icon>
-          </div>
-          <div class="txt"><span class="lbl">${this._t("grid")}</span><span class="val" style="color:${gridCol}">${fmtPower(v.grid)}</span>${gridLabel ? html`<span class="sub" style="color:${gridCol}">${gridLabel}</span>` : nothing}</div>
-        </div>
+        ${node("grid", !gridHasEnt, html`
+          ${squareIcon("grid", "mdi:transmission-tower", gridCol)}
+          <div class="txt"><span class="lbl">${this._t("grid")}</span><span class="val" style="color:${gridCol}">${fmtPower(v.grid)}</span>${gridLabel ? html`<span class="sub" style="color:${gridCol}">${gridLabel}</span>` : nothing}${dayLine(gridDay)}</div>`)}
 
-        <div class="node bl ${battHasEnt ? "" : "muted"}">
+        ${node("battery", !battHasEnt, html`
           ${c.battery_ring !== false
-            ? html`<div class="socwrap">
+            ? html`<div class="socwrap" data-anc="battery">
                 <svg class="socring" viewBox="0 0 52 52">
                   <circle cx="26" cy="26" r="23" fill="none" stroke="rgba(255,255,255,.12)" stroke-width="3.5"></circle>
                   ${battHasEnt && v.soc !== null ? svg`<circle cx="26" cy="26" r="23" fill="none" stroke="${battCol}" stroke-width="3.5" stroke-linecap="round" stroke-dasharray="${bs.circ}" stroke-dashoffset="${bs.offset}" transform="rotate(-90 26 26)"></circle>` : nothing}
                 </svg>
-                <div class="ic round" style="color:${battCol}">
-                  <ha-icon icon="mdi:battery-charging"></ha-icon>
-                </div>
+                <div class="ic round" style="color:${battCol}"><ha-icon icon="mdi:battery-charging"></ha-icon></div>
               </div>`
-            : html`<div class="ic" style="color:${battCol};border-color:${battCol}66;background:${battCol}22">
-                <ha-icon icon="mdi:battery-charging"></ha-icon>
-              </div>`}
-          <div class="txt"><span class="lbl">${this._t("battery")}${battHasEnt && v.soc !== null ? html` · <b style="color:${battCol}">${Math.round(v.soc)}%</b>` : nothing}</span><span class="val" style="color:${battCol}">${fmtPower(battValue)}</span>${battLabel ? html`<span class="sub" style="color:${battCol}">${battLabel}</span>` : nothing}</div>
-        </div>
+            : squareIcon("battery", "mdi:battery-charging", battCol)}
+          <div class="txt"><span class="lbl">${this._t("battery")}${battHasEnt && v.soc !== null ? html` · <b style="color:${battCol}">${Math.round(v.soc)}%</b>` : nothing}</span><span class="val" style="color:${battCol}">${fmtPower(battValue)}</span>${battLabel ? html`<span class="sub" style="color:${battCol}">${battLabel}</span>` : nothing}${dayLine(battDay)}</div>`)}
 
-        ${this._renderCars(carsShown, c, carHasEnt)}
+        ${this._renderDevices(devsShown, c, devHasEnt, node, arrowFromHouse("devices"), !!daily)}
 
         ${visual ? html`<div class="huis-wire"></div>` : nothing}
-        <div class="huis ${visual ? "huis-visual" : ""}${reduceEffects ? " no-fx" : ""}" style="${visual ? "" : `left:${huisLeftPct}%`}">
-          ${visual ? nothing : html`<div class="ic" style="color:${c.color_home};border-color:${c.color_home}66;background:${c.color_home}1f">
+        <div class="huis ${visual ? "huis-visual" : ""}${reduceEffects ? " no-fx" : ""}"
+          @pointerdown=${homeEv.down} @pointerup=${homeEv.up} @pointermove=${homeEv.move}
+          @pointerleave=${homeEv.cancel} @pointercancel=${homeEv.cancel} @contextmenu=${(e) => e.preventDefault()}>
+          ${visual ? nothing : html`<div class="ic" data-anc="home" style="color:${c.color_home};border-color:${c.color_home}66;background:${c.color_home}1f">
             <ha-icon icon="mdi:home"></ha-icon>
           </div>`}
+          ${visual ? html`<span class="anc-home" data-anc="home"></span>` : nothing}
           <span class="lbl">${this._t("home")}</span>
           <span class="val" style="color:${c.color_home}">${fmtPower(home)}</span>
+          ${dayLine(homeDay)}
         </div>
       </div>
     `;
   }
 
-  _renderCars(cars, c, carHasEnt = true) {
+  _renderDevices(devs, c, hasEnt, node, arrow, showDay) {
     const GREY = "#6b7280";
-    const cc = carHasEnt ? c.color_car : GREY;
+    const colOf = (d) => (hasEnt ? d.color || c.color_car : GREY);
     const mode = c.car_mode === "merged" ? "merged" : "scroll";
     const showRing = c.car_ring !== false;
-    const carInfo = (car) => html`
-      <span class="lbl">${car.name}${car.soc !== null ? html` · <b style="color:${cc}">${Math.round(car.soc)}%</b>` : nothing}</span>
-      <span class="val" style="color:${cc}">${fmtPower(car.power)}</span>
-      ${car.active ? html`<span class="sub" style="color:${cc}">${this._t("charging")}</span>` : nothing}
-    `;
-    const squareIcon = html`
-      <div class="ic" style="color:${cc};border-color:${cc}66;background:${cc}22">
-        <ha-icon icon="mdi:car-electric"></ha-icon>
-      </div>`;
-    // Ring reflects one specific car's SoC, so it only makes sense when there's a single
-    // clear "current" car — the lone car, or whichever one is currently cycled into view.
-    const ringIcon = (car) => {
-      const r = 23, circ = 2 * Math.PI * r;
-      const pct = car?.soc == null ? 0 : Math.max(0, Math.min(100, car.soc)) / 100;
-      const offset = circ * (1 - pct);
+    const info = (d) => {
+      const cc = colOf(d);
       return html`
-        <div class="socwrap">
+        <span class="lbl">${d.name}${d.soc != null ? html` · <b style="color:${cc}">${Math.round(d.soc)}%</b>` : nothing}</span>
+        <span class="val" style="color:${cc}">${fmtPower(d.power)}</span>
+        ${d.active ? html`<span class="sub" style="color:${cc}">${d.isCar ? this._t("charging") : this._t("active")}</span>` : nothing}
+        ${showDay && d.day != null ? html`<span class="day">${arrow} ${fmtKWh(d.day)} kWh</span>` : nothing}`;
+    };
+    const squareIcon = (icon, cc) => html`
+      <div class="ic" data-anc="devices" style="color:${cc};border-color:${cc}66;background:${cc}22">
+        <ha-icon icon="${icon}"></ha-icon>
+      </div>`;
+    const ringIcon = (d) => {
+      const cc = colOf(d);
+      const r = 23, circ = 2 * Math.PI * r;
+      const pct = d?.soc == null ? 0 : Math.max(0, Math.min(100, d.soc)) / 100;
+      return html`
+        <div class="socwrap" data-anc="devices">
           <svg class="socring" viewBox="0 0 52 52">
             <circle cx="26" cy="26" r="23" fill="none" stroke="rgba(255,255,255,.12)" stroke-width="3.5"></circle>
-            ${carHasEnt && car?.soc != null ? svg`<circle cx="26" cy="26" r="23" fill="none" stroke="${cc}" stroke-width="3.5" stroke-linecap="round" stroke-dasharray="${circ}" stroke-dashoffset="${offset}" transform="rotate(-90 26 26)"></circle>` : nothing}
+            ${hasEnt && d?.soc != null ? svg`<circle cx="26" cy="26" r="23" fill="none" stroke="${cc}" stroke-width="3.5" stroke-linecap="round" stroke-dasharray="${circ}" stroke-dashoffset="${circ * (1 - pct)}" transform="rotate(-90 26 26)"></circle>` : nothing}
           </svg>
-          <div class="ic round" style="color:${cc}">
-            <ha-icon icon="mdi:car-electric"></ha-icon>
-          </div>
+          <div class="ic round" style="color:${cc}"><ha-icon icon="${d.icon}"></ha-icon></div>
         </div>`;
     };
+    const iconFor = (d) => (showRing && d.isCar && d.soc != null ? ringIcon(d) : squareIcon(d.icon, colOf(d)));
 
-    if (mode === "merged" || cars.length === 1) {
-      // icon in corner, info to the left (mirror of accu)
-      const single = cars.length === 1 ? cars[0] : null;
-      const icon = showRing && single ? ringIcon(single) : squareIcon;
-      return html`
-        <div class="node br car ${carHasEnt ? "" : "muted"}">
-          <div class="txt carinfos">
-            ${cars.map((car) => html`<div class="cartxt">${carInfo(car)}</div>`)}
-          </div>
-          ${icon}
-        </div>`;
+    if (mode === "merged" || devs.length === 1) {
+      const single = devs.length === 1 ? devs[0] : null;
+      const sameIcon = devs.every((d) => d.icon === devs[0].icon);
+      const icon = single ? iconFor(single) : squareIcon(sameIcon ? devs[0].icon : "mdi:power-plug", hasEnt ? c.color_car : GREY);
+      return node("devices", !hasEnt, html`
+        ${icon}
+        <div class="txt carinfos">${devs.map((d) => html`<div class="cartxt">${info(d)}</div>`)}</div>`, "car");
     }
 
-    // scroll mode: icon (and ring, if enabled) cycles together with the shown car
-    const idx = this._carScrollIdx % cars.length;
-    const car = cars[idx];
-    const icon = showRing ? ringIcon(car) : squareIcon;
-    return html`
-      <div class="node br car ${carHasEnt ? "" : "muted"}">
-        <div class="txt">
-          <div class="cartxt caranim" data-k=${idx}>${carInfo(car)}</div>
-          <div class="cardots">
-            ${cars.map((_, i) => html`<span class="dot ${i === idx ? "on" : ""}" style="background:${i === idx ? cc : "rgba(255,255,255,.25)"}"></span>`)}
-          </div>
+    const idx = (this._carScrollIdx || 0) % devs.length;
+    const d = devs[idx];
+    return node("devices", !hasEnt, html`
+      ${iconFor(d)}
+      <div class="txt">
+        <div class="cartxt caranim" data-k=${idx}>${info(d)}</div>
+        <div class="cardots">
+          ${devs.map((_, i) => html`<span class="dot ${i === idx ? "on" : ""}" style="background:${i === idx ? colOf(d) : "rgba(255,255,255,.25)"}"></span>`)}
         </div>
-        ${icon}
-      </div>`;
+      </div>`, "car");
+  }
+
+  // Measure where the icons actually are, so wires can start/end exactly at them.
+  _measure(force = false) {
+    const flow = this.renderRoot?.querySelector?.(".flow");
+    if (!flow) return;
+    if (this._roTarget !== flow && typeof ResizeObserver !== "undefined") {
+      if (this._ro) this._ro.disconnect();
+      this._ro = new ResizeObserver(() => this._measure());
+      this._ro.observe(flow);
+      this._roTarget = flow;
+    }
+    const fr = flow.getBoundingClientRect();
+    if (!fr.width) return;
+    const m = { W: Math.round(fr.width), H: Math.round(fr.height) };
+    flow.querySelectorAll("[data-anc]").forEach((el) => {
+      const r = el.getBoundingClientRect();
+      const box = {
+        left: r.left - fr.left, right: r.right - fr.left, top: r.top - fr.top, bottom: r.bottom - fr.top,
+        width: r.width, height: r.height,
+      };
+      box.cx = box.left + r.width / 2;
+      box.cy = box.top + r.height / 2;
+      for (const k in box) box[k] = Math.round(box[k] * 2) / 2;
+      m[el.dataset.anc] = box;
+    });
+    const sig = JSON.stringify(m);
+    if (force || sig !== this._geoSig) {
+      this._geoSig = sig;
+      this._geo = m;
+      this.requestUpdate();
+    }
   }
 
   connectedCallback() {
@@ -714,6 +1038,8 @@ class EnergyFlowPriceCard extends LitElement {
     if (this._carTimer) { clearInterval(this._carTimer); this._carTimer = null; }
     if (this._flowTimer) { clearInterval(this._flowTimer); this._flowTimer = null; }
     if (this._chartTimer) { clearInterval(this._chartTimer); this._chartTimer = null; }
+    if (this._ro) { this._ro.disconnect(); this._ro = null; this._roTarget = null; }
+    clearTimeout(this._holdTimer);
   }
 
   _startCarScroll() {
@@ -726,6 +1052,7 @@ class EnergyFlowPriceCard extends LitElement {
   }
 
   updated() {
+    this._measure();
     // Restart the fade+slide animation whenever the shown car changes.
     const el = this.renderRoot?.querySelector?.(".caranim");
     if (el && el.dataset.k !== this._lastCarK) {
@@ -767,12 +1094,14 @@ class EnergyFlowPriceCard extends LitElement {
     return [
       { id: "price", label: this._t("tab_price"), show: !!c.price_entity || !!c.price_use_tibber_service },
       { id: "solar", label: this._t("tab_solar"), show: !!c.solar_power },
+      { id: "grid", label: this._t("tab_grid"), show: !!c.grid_power },
       { id: "accu", label: this._t("tab_battery"), show: !!c.battery_soc },
       {
         id: "usage",
         label: this._t("tab_usage"),
         show: !!(c.solar_power || c.battery_charge_power || c.battery_discharge_power || c.grid_power),
       },
+      { id: "devices", label: this._t("tab_devices"), show: this._devices().some((d) => d.power) },
     ].filter((t) => t.show);
   }
 
@@ -780,7 +1109,6 @@ class EnergyFlowPriceCard extends LitElement {
     const c = this._config;
     const mode = this._chartMode || "price";
     const tabs = this._chartTabs();
-    // if selected tab is unavailable, fall back to first
     const activeMode = tabs.some((t) => t.id === mode) ? mode : (tabs[0]?.id || "price");
 
     const tabBar = tabs.length > 1 ? html`
@@ -789,21 +1117,35 @@ class EnergyFlowPriceCard extends LitElement {
           <button class="tab ${t.id === activeMode ? "on" : ""}" @click=${() => this._setChartMode(t.id, true)}>${t.label}</button>`)}
       </div>` : nothing;
 
+    // Time-span chips: price chart -> hours ahead; all other charts -> history span.
+    let ranges;
+    if (activeMode === "price") {
+      const cur = this._priceHours ?? Math.max(8, Math.min(48, c.price_hours || 24));
+      ranges = html`<div class="ranges">${PRICE_RANGES.map((h) => html`
+        <button class="rng ${h === cur ? "on" : ""}" @click=${() => { this._priceHours = h; this._selectedSlot = null; this._tapLock = false; this._pauseAutoScroll(); this.requestUpdate(); }}>${h}h</button>`)}</div>`;
+    } else {
+      const cur = this._histRange ?? c.history_range ?? "today";
+      ranges = html`<div class="ranges">${HISTORY_RANGES.map((r) => html`
+        <button class="rng ${r.id === cur ? "on" : ""}" @click=${() => { this._histRange = r.id; this._cursor = null; this._pauseAutoScroll(); this.requestUpdate(); }}>${this._t("range_" + r.id)}</button>`)}</div>`;
+    }
+
     let body;
     if (activeMode === "price") body = this._priceChart(c);
-    else if (activeMode === "usage") body = this._usageChart(c);
     else body = this._historyChart(c, activeMode);
 
-    return html`<div class="price">${tabBar}<div class="chartbody" data-k=${activeMode}>${body}</div></div>`;
+    return html`<div class="price">${tabBar}${ranges}<div class="chartbody" data-k=${activeMode}>${body}</div></div>`;
   }
 
   _setChartMode(m, manual = false) {
+    if (this._chartMode !== m) { this._cursor = null; }
     this._chartMode = m;
-    if (m === "usage") this._ensureUsageHistory();
-    else if (m !== "price") this._ensureHistory(m);
-    // A manual click overrides auto-scroll for a while so the user's choice sticks.
-    if (manual && this._config?.chart_auto_scroll) this._startChartScroll();
+    if (manual) this._pauseAutoScroll();
     this.requestUpdate();
+  }
+
+  // A manual interaction restarts the auto-scroll timer so the user's choice sticks.
+  _pauseAutoScroll() {
+    if (this._config?.chart_auto_scroll) this._startChartScroll();
   }
 
   _startChartScroll() {
@@ -811,6 +1153,7 @@ class EnergyFlowPriceCard extends LitElement {
     if (!this._config?.chart_auto_scroll) return;
     const secs = Math.max(3, this._config.chart_scroll_interval || 8);
     this._chartTimer = setInterval(() => {
+      if (this._cursor != null || this._tapLock) return; // user is inspecting a point in time
       const tabs = this._chartTabs();
       if (tabs.length < 2) return;
       const mode = this._chartMode || "price";
@@ -820,215 +1163,303 @@ class EnergyFlowPriceCard extends LitElement {
     }, secs * 1000);
   }
 
-  // Fetch today's history for solar/accu once, cache it.
-  async _ensureHistory(mode) {
-    const c = this._config;
-    const entity = mode === "solar" ? c.solar_power : c.battery_soc;
-    if (!entity || !this.hass) return;
-    this._history = this._history || {};
-    const cacheKey = mode + "|" + entity;
-    // refresh at most every 5 min
-    const cached = this._history[cacheKey];
-    if (cached && Date.now() - cached.fetched < 300000) return;
-
-    const start = new Date();
-    start.setHours(0, 0, 0, 0);
-    try {
-      const url = `history/period/${start.toISOString()}?filter_entity_id=${entity}&minimal_response`;
-      const res = await this.hass.callApi("GET", url);
-      const arr = Array.isArray(res) && res[0] ? res[0] : [];
-      const points = arr.map((s) => ({
-        t: new Date(s.last_changed || s.last_updated).getTime(),
-        v: parseFloat(s.state),
-      })).filter((p) => !isNaN(p.v));
-      this._history[cacheKey] = { fetched: Date.now(), points };
-      this.requestUpdate();
-    } catch (e) {
-      this._history[cacheKey] = { fetched: Date.now(), points: [], error: true };
-      this.requestUpdate();
-    }
+  _rangeSpec() {
+    const id = this._histRange ?? this._config.history_range ?? "today";
+    const r = HISTORY_RANGES.find((x) => x.id === id) || HISTORY_RANGES.find((x) => x.id === "today");
+    const end = Date.now();
+    const start = r.hours == null ? startOfToday() : end - r.hours * 3600000;
+    return { id: r.id, start, end, hours: (end - start) / 3600000 };
   }
 
-  // Fetch the last hour of raw power history (W) for all flow entities at once — reuses
-  // the same entities already configured for the flow diagram, no separate config needed.
-  // One REST call for every entity (comma-separated filter_entity_id) instead of the
-  // one-entity-at-a-time pattern _ensureHistory() uses for the Solar/Battery tabs.
-  async _ensureUsageHistory() {
-    const c = this._config;
-    const entities = [c.solar_power, c.battery_charge_power, c.battery_discharge_power, c.grid_power].filter(Boolean);
-    if (!entities.length || !this.hass) return;
-    const cacheKey = entities.join(",");
-    this._usageHistory = this._usageHistory || {};
-    const cached = this._usageHistory[cacheKey];
-    if (cached && Date.now() - cached.fetched < 60000) return; // refresh every minute
-
-    const start = new Date(Date.now() - 3600000); // last hour
-    try {
-      const url = `history/period/${start.toISOString()}?filter_entity_id=${entities.join(",")}&minimal_response`;
-      const res = await this.hass.callApi("GET", url);
-      const byEntity = {};
-      for (const arr of (Array.isArray(res) ? res : [])) {
-        if (!Array.isArray(arr) || !arr.length) continue;
-        const id = arr[0].entity_id;
-        byEntity[id] = arr.map((s) => ({
-          t: new Date(s.last_changed || s.last_updated).getTime(),
-          v: parseFloat(s.state),
-        })).filter((p) => !isNaN(p.v));
-      }
-      this._usageHistory[cacheKey] = { fetched: Date.now(), byEntity };
-      this.requestUpdate();
-    } catch (e) {
-      this._usageHistory[cacheKey] = { fetched: Date.now(), byEntity: {}, error: true };
-      this.requestUpdate();
+  // Load (and cache) history for a set of entities over the chosen span. Spans longer
+  // than 24 h use the recorder's 5-minute/hourly statistics (much lighter), falling back
+  // to raw history for entities without statistics.
+  _seriesData(entities, spec) {
+    entities = [...new Set(entities.filter(Boolean))];
+    if (!entities.length || !this.hass) return { byEntity: {}, loaded: true };
+    this._hcache = this._hcache || {};
+    const key = entities.join(",") + "|" + spec.id;
+    const cached = this._hcache[key];
+    const maxAge = spec.hours > 24 ? 600000 : 60000;
+    if (!cached || (!cached.busy && Date.now() - cached.fetched > maxAge)) {
+      this._hcache[key] = { ...(cached || { byEntity: {} }), busy: true, fetched: Date.now() };
+      this._fetchSeries(entities, spec).then((res) => {
+        this._hcache[key] = { ...res, busy: false, fetched: Date.now(), loaded: true };
+        this.requestUpdate();
+      });
     }
+    return this._hcache[key];
   }
 
-  _usageChart(c) {
-    const entities = [c.solar_power, c.battery_charge_power, c.battery_discharge_power, c.grid_power].filter(Boolean);
-    const cacheKey = entities.join(",");
-    const cached = this._usageHistory?.[cacheKey];
-    if (!cached) this._ensureUsageHistory();
-    const byEntity = cached?.byEntity || {};
-
-    const startMs = Date.now() - 3600000;
-    const now = Date.now();
-    const span = Math.max(1, now - startMs);
-
-    // Three series: solar, battery (discharge=+, charge=-, net contribution to the
-    // home), and grid (positive=import, negative=export/"teruglevering").
-    const series = [
-      { key: c.solar_power, color: c.color_solar, name: this._t("solar") },
-      { key: c.battery_discharge_power, extraKey: c.battery_charge_power, color: c.color_battery, name: this._t("battery") },
-      { key: c.grid_power, color: c.color_grid, name: this._t("grid") },
-    ].filter((s) => s.key || s.extraKey);
-
-    const seriesPoints = series.map((s) => {
-      if (s.extraKey !== undefined) {
-        // battery: merge discharge (+) and charge (-) sample times into one net series
-        const dis = (byEntity[s.key] || []);
-        const chg = (byEntity[s.extraKey] || []);
-        const times = [...new Set([...dis.map((p) => p.t), ...chg.map((p) => p.t)])].sort((a, b) => a - b);
-        const valueAt = (arr, t) => { let last = 0; for (const p of arr) { if (p.t > t) break; last = p.v; } return last; };
-        return { ...s, points: times.map((t) => ({ t, v: valueAt(dis, t) - valueAt(chg, t) })) };
-      }
-      return { ...s, points: (byEntity[s.key] || []).map((p) => ({ t: p.t, v: p.v })) };
-    }).filter((s) => s.points.length);
-
-    const allVals = seriesPoints.flatMap((s) => s.points.map((p) => p.v));
-    const maxV = Math.max(10, ...allVals.map(Math.abs)) * 1.1;
-
-    const pathFor = (points) => points.length
-      ? points.map((p, i) => {
-          const x = Math.max(0, Math.min(1, (p.t - startMs) / span)) * 100;
-          const y = 50 - Math.max(-1, Math.min(1, p.v / maxV)) * 50;
-          return `${i === 0 ? "M" : "L"}${x.toFixed(2)},${y.toFixed(2)}`;
-        }).join(" ")
-      : "";
-
-    const labelEvery = 15; // minutes
-    const labels = [];
-    for (let m = 0; m <= 60; m += labelEvery) {
-      const d = new Date(startMs + m * 60000);
-      labels.push({ frac: (m * 60000) / span, text: d.getHours() + ":" + String(d.getMinutes()).padStart(2, "0") });
+  async _fetchSeries(entities, spec) {
+    const byEntity = {};
+    const factor = (id) => unitFactor(this.hass.states[id]?.attributes?.unit_of_measurement);
+    let missing = entities;
+    let error = false;
+    if (spec.hours > 24 && this.hass.callWS) {
+      try {
+        const r = await this.hass.callWS({
+          type: "recorder/statistics_during_period",
+          start_time: new Date(spec.start).toISOString(),
+          end_time: new Date(spec.end).toISOString(),
+          statistic_ids: entities,
+          period: spec.hours > 48 ? "hour" : "5minute",
+          types: ["mean"],
+        });
+        for (const id of entities) {
+          const arr = r?.[id];
+          if (!Array.isArray(arr) || !arr.length) continue;
+          const f = factor(id);
+          byEntity[id] = arr
+            .map((s) => ({ t: typeof s.start === "number" ? s.start : Date.parse(s.start), v: s.mean * f }))
+            .filter((p) => !isNaN(p.v) && !isNaN(p.t));
+        }
+      } catch (e) { /* fall back to history */ }
+      missing = entities.filter((id) => !byEntity[id]);
     }
-
-    const yTicks = [1, 0.5, 0, -0.5, -1].map((f) => Math.round(maxV * f));
-
-    return html`
-      <div class="chdr">
-        <span class="t">${this._t("usage_title")}</span>
-        <div class="usage-legend">
-          ${seriesPoints.map((s) => html`<span class="usage-legend-item"><i style="background:${s.color}"></i>${s.name}</span>`)}
-        </div>
-      </div>
-      <div class="chart">
-        <div class="yaxis">${yTicks.map((t) => html`<span>${t}</span>`)}</div>
-        <div class="plot">
-          ${seriesPoints.length
-            ? html`<svg class="hist" viewBox="0 0 100 100" preserveAspectRatio="none">
-                <line x1="0" y1="50" x2="100" y2="50" stroke="var(--divider-color, rgba(255,255,255,.2))" stroke-width="0.5" vector-effect="non-scaling-stroke"></line>
-                ${seriesPoints.map((s) => svg`<path d="${pathFor(s.points)}" fill="none" stroke="${s.color}" stroke-width="1.5" vector-effect="non-scaling-stroke"></path>`)}
-              </svg>`
-            : html`<div class="empty">${cached?.error ? this._t("history_none") : this._t("history_loading")}</div>`}
-          <div class="nowline right" data-now="${this._t("now")}" style="left:100%"></div>
-        </div>
-        <div class="xaxis">
-          ${labels.map((l) => html`<span class="tick" style="left:${Math.min(100, l.frac * 100)}%">${l.text}</span>`)}
-        </div>
-      </div>
-    `;
+    if (missing.length) {
+      try {
+        const url = `history/period/${new Date(spec.start).toISOString()}?filter_entity_id=${missing.join(",")}` +
+          `&end_time=${encodeURIComponent(new Date(spec.end).toISOString())}&minimal_response&no_attributes`;
+        const res = await this.hass.callApi("GET", url);
+        for (const arr of Array.isArray(res) ? res : []) {
+          if (!Array.isArray(arr) || !arr.length) continue;
+          const id = arr[0].entity_id;
+          const f = factor(id);
+          const pts = arr.map((s) => ({
+            t: Math.max(spec.start, Date.parse(s.last_changed || s.last_updated)),
+            v: parseFloat(s.state) * f,
+          })).filter((p) => !isNaN(p.v) && !isNaN(p.t));
+          byEntity[id] = downsample(pts, spec.start, spec.end, 600);
+        }
+      } catch (e) {
+        error = true;
+      }
+    }
+    return { byEntity, error };
   }
 
   _historyChart(c, mode) {
-    const entity = mode === "solar" ? c.solar_power : c.battery_soc;
-    const color = mode === "solar" ? c.color_solar : c.color_battery;
-    const unit = mode === "solar" ? "W" : "%";
-    const title = mode === "solar" ? this._t("solar_today") : this._t("battery_today");
+    const spec = this._rangeSpec();
+    const T = (k) => this._t(k);
+    const live = (e) => pw(this.hass, e);
+    let series = [];
+    let opts = {};
+    let entities = [];
 
-    const cacheKey = mode + "|" + entity;
-    const cached = this._history?.[cacheKey];
-    if (!cached) { this._ensureHistory(mode); }
-    const points = cached?.points || [];
-
-    // build a smooth area/line over today 00:00 -> now (axis ends at NOW)
-    const start = new Date(); start.setHours(0, 0, 0, 0);
-    const startMs = start.getTime();
-    const now = Date.now();
-    const span = Math.max(1, now - startMs);
-
-    let maxV = mode === "accu" ? 100 : Math.max(10, ...points.map((p) => p.v)) * 1.1;
-    const path = points.length
-      ? points.map((p, i) => {
-          const x = Math.max(0, Math.min(1, (p.t - startMs) / span)) * 100;
-          const y = 100 - Math.max(0, Math.min(1, p.v / maxV)) * 100;
-          return `${i === 0 ? "M" : "L"}${x.toFixed(2)},${y.toFixed(2)}`;
-        }).join(" ")
-      : "";
-    const areaPath = path ? `${path} L100,100 L0,100 Z` : "";
-
-    // labels only up to the current hour; axis runs 00:00 -> now
-    const nowHour = now / 3600000 - startMs / 3600000; // hours since midnight (fractional)
-    const labelEvery = nowHour <= 8 ? 2 : 3;
-    const labels = [];
-    for (let h = 0; h <= Math.floor(nowHour); h += labelEvery) {
-      labels.push({ frac: (h * 3600000) / span, text: h + ":00" });
+    if (mode === "solar") {
+      entities = [c.solar_power];
+      series = [{ name: T("solar"), color: c.color_solar, entity: c.solar_power, area: true, live: live(c.solar_power) }];
+      opts = { title: T("tab_solar") };
+    } else if (mode === "grid") {
+      entities = [c.grid_power];
+      series = [{
+        name: T("grid"), color: c.color_grid, entity: c.grid_power, live: live(c.grid_power), split: true,
+        label: (v) => (v < 0 ? T("grid_export") : T("grid_import")),
+      }];
+      opts = { title: T("grid_title"), signed: true, splitColors: { pos: c.color_grid, neg: c.color_grid_export || "#22c55e" } };
+    } else if (mode === "accu") {
+      entities = [c.battery_soc];
+      series = [{ name: T("battery"), color: c.color_battery, entity: c.battery_soc, area: true, live: num(this.hass, c.battery_soc) }];
+      opts = { title: T("battery_soc_title"), fixedMax: 100, unit: "%" };
+    } else if (mode === "usage") {
+      entities = [c.solar_power, c.battery_charge_power, c.battery_discharge_power, c.grid_power];
+      opts = { title: T("usage_title"), signed: true, merged: true };
+    } else if (mode === "devices") {
+      const devs = this._devices().filter((d) => d.power);
+      entities = devs.map((d) => d.power);
+      series = devs.map((d, i) => ({
+        name: d.name || this._t("dev_" + d.type), color: d.color || DEVICE_PALETTE[i % DEVICE_PALETTE.length],
+        entity: d.power, live: live(d.power),
+      }));
+      opts = { title: T("devices_title") };
     }
-    // always show the current time at the far right
-    const curD = new Date(now);
-    labels.push({ frac: 1, text: curD.getHours() + ":" + String(curD.getMinutes()).padStart(2, "0") });
-    const nowFrac = 1; // now is the right edge
 
-    const cur = num(this.hass, entity);
-    const yTicks = [1, 0.75, 0.5, 0.25, 0].map((f) => Math.round(maxV * f) + (mode === "accu" ? "" : ""));
+    const data = this._seriesData(entities, spec);
+    const byEntity = data.byEntity || {};
+
+    if (mode === "usage") {
+      // solar, battery (discharge +, charge −), grid (+ import, − export) and the computed home use
+      const sol = byEntity[c.solar_power] || [];
+      const dis = byEntity[c.battery_discharge_power] || [];
+      const chg = byEntity[c.battery_charge_power] || [];
+      const grd = byEntity[c.grid_power] || [];
+      const battPts = (c.battery_discharge_power || c.battery_charge_power) ? mergeSeries([dis, chg], ([a, b]) => a - b) : [];
+      const homePts = mergeSeries([sol, grd, dis, chg], ([s, g, d, ch]) => s + g + d - ch);
+      const lv = {
+        solar: live(c.solar_power), grid: live(c.grid_power),
+        dis: live(c.battery_discharge_power), chg: live(c.battery_charge_power),
+      };
+      const vv = {
+        solar: pw(this.hass, c.solar_power), grid: pw(this.hass, c.grid_power),
+        charge: pw(this.hass, c.battery_charge_power), discharge: pw(this.hass, c.battery_discharge_power),
+      };
+      series = [
+        c.solar_power ? { name: T("solar"), color: c.color_solar, points: sol, live: lv.solar } : null,
+        battPts.length ? { name: T("battery"), color: c.color_battery, points: battPts, live: (lv.dis ?? 0) - (lv.chg ?? 0) } : null,
+        c.grid_power ? { name: T("grid"), color: c.color_grid, points: grd, live: lv.grid } : null,
+        homePts.length ? { name: T("home"), color: c.color_home, points: homePts, live: this._homePower(vv), area: true } : null,
+      ].filter(Boolean);
+    } else {
+      series = series.map((s) => ({ ...s, points: byEntity[s.entity] || [] }));
+    }
+
+    return this._lineChart({ ...opts, series, spec, loading: !data.loaded, error: data.error });
+  }
+
+  // Generic time-series chart (line/area) with a draggable time cursor underneath.
+  _lineChart({ title, series, spec, signed = false, fixedMax = null, unit = "W", splitColors = null, loading = false, error = false }) {
+    const startMs = spec.start;
+    const endMs = spec.end;
+    const span = Math.max(1, endMs - startMs);
+    const lang = resolveLang(this._config.language, this.hass);
+
+    // extend every series to "now" with its live (or last) value
+    const S = series.map((s) => {
+      const pts = (s.points || []).filter((p) => p.t <= endMs);
+      if (pts.length) {
+        const lastV = s.live != null && !isNaN(s.live) ? s.live : pts[pts.length - 1].v;
+        pts.push({ t: endMs, v: lastV });
+      }
+      return { ...s, pts };
+    });
+    const hasData = S.some((s) => s.pts.length);
+
+    const vals = S.flatMap((s) => s.pts.map((p) => p.v));
+    let minV, maxV;
+    if (fixedMax != null) { minV = 0; maxV = fixedMax; }
+    else {
+      maxV = Math.max(0, ...vals);
+      minV = signed ? Math.min(0, ...vals) : 0;
+      if (maxV - minV < 10) maxV = minV + 10;
+      const pad = (maxV - minV) * 0.08;
+      maxV += pad;
+      if (minV < 0) minV -= pad;
+    }
+    const xOf = (t) => Math.max(0, Math.min(1, (t - startMs) / span)) * 100;
+    const yOf = (v) => ((maxV - v) / (maxV - minV)) * 100;
+    const y0 = yOf(Math.max(minV, Math.min(maxV, 0)));
+    // step lines (a value holds until the next change), which is how HA records power
+    const stepPath = (pts) => {
+      let d = "";
+      pts.forEach((p, i) => {
+        const x = xOf(p.t).toFixed(2), y = yOf(p.v).toFixed(2);
+        if (i === 0) d = `M${x},${y}`;
+        else d += ` H${x} V${y}`;
+      });
+      return d;
+    };
+    const areaPath = (pts) => {
+      if (!pts.length) return "";
+      return `${stepPath(pts)} L${xOf(pts[pts.length - 1].t).toFixed(2)},${y0.toFixed(2)} L${xOf(pts[0].t).toFixed(2)},${y0.toFixed(2)} Z`;
+    };
+
+    const fmtVal = (v) => {
+      if (v == null || isNaN(v)) return "–";
+      if (unit === "%") return Math.round(v) + "%";
+      return fmtPower(v);
+    };
+    const yTicks = [0, 0.25, 0.5, 0.75, 1].map((f) => {
+      const v = maxV - f * (maxV - minV);
+      if (unit === "%") return Math.round(v) + "";
+      const a = Math.abs(maxV) > Math.abs(minV) ? Math.abs(maxV) : Math.abs(minV);
+      return a >= 1000 ? (v / 1000).toFixed(1).replace(".", ",") + "k" : String(Math.round(v));
+    });
+
+    const labels = timeLabels(startMs, endMs, lang);
+
+    // cursor
+    const cur = this._cursor;
+    const tCur = cur == null ? null : startMs + cur * span;
+    const valueAt = (pts, t) => {
+      let last = null;
+      for (const p of pts) { if (p.t > t) break; last = p.v; }
+      return last;
+    };
+    const timeTxt = tCur == null
+      ? this._t("now")
+      : new Date(tCur).toLocaleString(lang, span > 86400000
+        ? { weekday: "short", hour: "2-digit", minute: "2-digit" }
+        : { hour: "2-digit", minute: "2-digit" });
+
+    const clipPos = `efp-cp-${this._uid}`, clipNeg = `efp-cn-${this._uid}`;
 
     return html`
       <div class="chdr">
         <span class="t">${title}</span>
-        ${cur !== null ? html`<span class="now">${this._t("now")}: <b>${mode === "accu" ? Math.round(cur) + "%" : fmtPower(cur)}</b></span>` : nothing}
+        <span class="now ${cur != null ? "sel" : ""}"><ha-icon icon="mdi:clock-outline"></ha-icon><b>${timeTxt}</b>${cur != null ? this._resetBtn(() => { this._cursor = null; this.requestUpdate(); }) : nothing}</span>
+      </div>
+      <div class="usage-legend">
+        ${S.map((s) => {
+          const v = tCur == null ? (s.live ?? (s.pts.length ? s.pts[s.pts.length - 1].v : null)) : valueAt(s.pts, tCur);
+          const lbl = s.label && v != null ? s.label(v) : s.name;
+          const col = s.split && splitColors && v != null ? (v < 0 ? splitColors.neg : splitColors.pos) : s.color;
+          return html`<span class="usage-legend-item"><i style="background:${col}"></i>${lbl} <b style="color:${col}">${fmtVal(s.split && v != null ? Math.abs(v) : v)}</b></span>`;
+        })}
       </div>
       <div class="chart">
         <div class="yaxis">${yTicks.map((t) => html`<span>${t}</span>`)}</div>
         <div class="plot">
-          ${points.length
+          ${hasData
             ? html`<svg class="hist" viewBox="0 0 100 100" preserveAspectRatio="none">
-                <path d="${areaPath}" fill="${color}22"></path>
-                <path d="${path}" fill="none" stroke="${color}" stroke-width="1.5" vector-effect="non-scaling-stroke"></path>
+                <defs>
+                  <clipPath id="${clipPos}"><rect x="0" y="0" width="100" height="${y0}"></rect></clipPath>
+                  <clipPath id="${clipNeg}"><rect x="0" y="${y0}" width="100" height="${Math.max(0, 100 - y0)}"></rect></clipPath>
+                </defs>
+                ${minV < 0 ? svg`<line x1="0" y1="${y0}" x2="100" y2="${y0}" stroke="var(--divider-color, rgba(255,255,255,.2))" stroke-width="1" vector-effect="non-scaling-stroke"></line>` : nothing}
+                ${S.map((s) => {
+                  if (!s.pts.length) return nothing;
+                  const line = stepPath(s.pts);
+                  if (s.split && splitColors) {
+                    const area = areaPath(s.pts);
+                    return svg`
+                      <path d="${area}" fill="${splitColors.pos}33" clip-path="url(#${clipPos})"></path>
+                      <path d="${area}" fill="${splitColors.neg}33" clip-path="url(#${clipNeg})"></path>
+                      <path d="${line}" fill="none" stroke="${splitColors.pos}" stroke-width="1.5" vector-effect="non-scaling-stroke" clip-path="url(#${clipPos})"></path>
+                      <path d="${line}" fill="none" stroke="${splitColors.neg}" stroke-width="1.5" vector-effect="non-scaling-stroke" clip-path="url(#${clipNeg})"></path>`;
+                  }
+                  return svg`
+                    ${s.area ? svg`<path d="${areaPath(s.pts)}" fill="${s.color}22"></path>` : nothing}
+                    <path d="${line}" fill="none" stroke="${s.color}" stroke-width="1.5" vector-effect="non-scaling-stroke"></path>`;
+                })}
               </svg>`
-            : html`<div class="empty">${cached?.error ? this._t("history_none") : this._t("history_loading")}</div>`}
-          <div class="nowline right" data-now="${this._t("now")}" style="left:${Math.min(100, nowFrac * 100)}%"></div>
+            : html`<div class="empty">${error ? this._t("history_none") : loading ? this._t("history_loading") : this._t("history_none")}</div>`}
+          <div class="nowline right" data-now="${this._t("now")}" style="left:100%"></div>
+          ${tCur != null ? html`
+            <div class="cursor" style="left:${cur * 100}%"></div>
+            ${S.map((s) => {
+              const v = valueAt(s.pts, tCur);
+              if (v == null) return nothing;
+              const col = s.split && splitColors ? (v < 0 ? splitColors.neg : splitColors.pos) : s.color;
+              return html`<span class="cdot" style="left:${cur * 100}%;top:${yOf(v)}%;background:${col}"></span>`;
+            })}` : nothing}
         </div>
         <div class="xaxis">
-          ${labels.map((l) => html`<span class="tick" style="left:${Math.min(100, l.frac * 100)}%">${l.text}</span>`)}
+          ${labels.map((l) => html`<span class="tick" style="left:${l.frac * 100}%">${l.text}</span>`)}
         </div>
       </div>
+      ${this._scrubber(cur == null ? 1 : cur, (f) => { this._cursor = f >= 0.999 ? null : f; this.requestUpdate(); })}
     `;
+  }
+
+  // Slider under a chart to pick an exact point in time.
+  _scrubber(frac, onInput) {
+    return html`
+      <div class="scrub">
+        <input type="range" min="0" max="1000" step="1" .value=${String(Math.round(frac * 1000))}
+          @input=${(e) => onInput(parseInt(e.target.value, 10) / 1000)} />
+      </div>`;
+  }
+
+  _resetBtn(onReset) {
+    return html`<button class="scrub-now" title=${this._t("back_to_now")} @click=${onReset}>✕</button>`;
   }
 
   _priceChart(c) {
     if (c.price_use_tibber_service) this._ensureTibberPrices();
     const { points: allPoints, current } = this._priceData();
     const now = Date.now();
-    const hours = Math.max(8, Math.min(48, c.price_hours || 24));
+    const hours = this._priceHours ?? Math.max(8, Math.min(48, c.price_hours || 24));
 
     // Fixed axis: from start of current hour to +hours.
     const axisStart = new Date();
@@ -1137,10 +1568,10 @@ class EnergyFlowPriceCard extends LitElement {
 
     return html`
       <div class="chdr">
-        <span class="t">${this._t("price_title")} (${hours}u)</span>
+        <span class="t">${this._t("price_title")} (${hours}h)</span>
         <div class="chdr-right">
           ${sel
-            ? html`<span class="now sel"><ha-icon icon="mdi:flash"></ha-icon>${new Date(sel.t).toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" })}: <b>${sel.v.toFixed(3).replace(".", ",")}</b></span>`
+            ? html`<span class="now sel"><ha-icon icon="mdi:flash"></ha-icon>${new Date(sel.t).toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" })}: <b>${sel.v.toFixed(3).replace(".", ",")}</b>${this._tapLock ? this._resetBtn(() => { this._selectedSlot = null; this._tapLock = false; this.requestUpdate(); }) : nothing}</span>`
             : current !== null
               ? html`<span class="now"><ha-icon icon="mdi:flash"></ha-icon>${this._t("now")}: <b>${current.toFixed(3).replace(".", ",")}</b></span>`
               : nothing}
@@ -1164,6 +1595,14 @@ class EnergyFlowPriceCard extends LitElement {
             ${relLabels.map((l) => html`<span class="tick" style="left:${l.frac * 100}%">${l.text}</span>`)}
           </div>` : nothing}
       </div>
+      ${this._scrubber(
+        sel ? (slots.findIndex((s) => s.t === sel.t) + 0.5) / slots.length : nowFrac,
+        (f) => {
+          const i = Math.max(0, Math.min(slots.length - 1, Math.floor(f * slots.length)));
+          const s = slots[i];
+          if (s && s.v !== null) { this._selectedSlot = s; this._tapLock = true; this.requestUpdate(); }
+        },
+      )}
     `;
   }
 
@@ -1309,10 +1748,14 @@ class EnergyFlowPriceCard extends LitElement {
       .node { position: absolute; display: flex; align-items: center; gap: 8px; z-index: 2; }
       .node.tl { left: 6px; top: 8px; }
       .node.tr { right: 6px; top: 8px; flex-direction: row-reverse; text-align: right; }
+      .node { cursor: pointer; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
+      .node .ic, .node .socwrap { transition: transform .15s ease; }
+      .node:active .ic, .node:active .socwrap { transform: scale(.94); }
+      .txt .day { font-size: 10px; color: var(--secondary-text-color); white-space: nowrap; font-variant-numeric: tabular-nums; margin-top: 1px; }
       .node.bl { left: 6px; bottom: 8px; }
       .node.muted { opacity: .55; }
       .node.muted .val, .node.muted .sub { opacity: .8; }
-      .node.br { right: 6px; bottom: 8px; flex-direction: row; justify-content: flex-end; text-align: right; }
+      .node.br { right: 6px; bottom: 8px; flex-direction: row-reverse; text-align: right; }
       .node.br .txt { align-items: flex-end; }
       .node .ic, .node-car .ic { width: 44px; height: 44px; border-radius: 12px; flex: 0 0 auto; display: flex; align-items: center; justify-content: center; border: 1.5px solid transparent; }
       .node .ic ha-icon, .node-car .ic ha-icon { --mdc-icon-size: 24px; }
@@ -1334,6 +1777,9 @@ class EnergyFlowPriceCard extends LitElement {
       .cardots { display: flex; gap: 4px; margin-top: 3px; justify-content: flex-end; }
       .cardots .dot { width: 6px; height: 6px; border-radius: 50%; transition: background .3s; }
 
+      .huis { cursor: pointer; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
+      .huis .day { font-size: 10px; color: var(--secondary-text-color); white-space: nowrap; }
+      .anc-home { width: 1px; height: 1px; }
       .huis { position: absolute; left: 50%; top: 54.7%; transform: translate(-50%, -29px); z-index: 3; display: flex; flex-direction: column; align-items: center; gap: 2px; text-align: center; }
       .huis.huis-visual { left: 50%; top: 50%; align-items: flex-end; text-align: right; transform: translate(calc(-100% - 110px), -50%); }
       .huis.huis-visual .lbl, .huis.huis-visual .val { text-shadow: 0 1px 3px rgba(0,0,0,.8), 0 0 6px rgba(0,0,0,.6); }
@@ -1351,7 +1797,19 @@ class EnergyFlowPriceCard extends LitElement {
       .chdr .now ha-icon { --mdc-icon-size: 13px; color: var(--info-color, #7dd3fc); }
       .chdr .now.gas ha-icon { color: var(--warning-color, #f5a623); }
       .chdr .now.gas b { color: var(--warning-color, #f5a623); }
-      .tabs { display: flex; gap: 6px; margin-bottom: 10px; }
+      .tabs { display: flex; gap: 6px; margin-bottom: 8px; overflow-x: auto; scrollbar-width: none; }
+      .tabs::-webkit-scrollbar { display: none; }
+      .tab { flex: 0 0 auto; }
+      .ranges { display: flex; gap: 4px; margin-bottom: 8px; flex-wrap: wrap; }
+      .rng { cursor: pointer; border: 1px solid transparent; background: rgba(127,127,127,.12); color: var(--secondary-text-color); border-radius: 6px; padding: 1px 8px; font-size: 11px; }
+      .rng.on { border-color: var(--primary-color); color: var(--primary-color); background: transparent; }
+      .scrub { margin-top: -8px; padding-left: 34px; }
+      .scrub input[type="range"] { display: block; width: calc(100% + 14px); margin: 0 -7px; accent-color: var(--primary-color); height: 22px; cursor: pointer; }
+      .scrub-now { cursor: pointer; border: none; background: rgba(127,127,127,.18); color: var(--primary-text-color); border-radius: 50%; width: 18px; height: 18px; padding: 0; font-size: 10px; line-height: 18px; margin-left: 6px; }
+      .cursor { position: absolute; top: 0; bottom: 0; width: 0; border-left: 1.5px solid var(--primary-text-color); opacity: .7; pointer-events: none; }
+      .cdot { position: absolute; width: 8px; height: 8px; border-radius: 50%; transform: translate(-50%, -50%); box-shadow: 0 0 0 2px var(--card-background-color, #1c1c1c); pointer-events: none; }
+      .empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 12px; color: var(--secondary-text-color); }
+      .chdr .now.sel b { color: var(--primary-color); }
       .tab { cursor: pointer; border: 1px solid var(--divider-color); background: transparent; color: var(--secondary-text-color); border-radius: 999px; padding: 3px 12px; font-size: 12px; transition: all .2s; }
       .tab.on { background: var(--primary-color); border-color: var(--primary-color); color: var(--text-primary-color, #fff); }
       .chartbody.run { animation: chartfade .4s ease; }
@@ -1394,7 +1852,8 @@ class EnergyFlowPriceCard extends LitElement {
       .xaxis .tick::before { content: ""; position: absolute; top: -6px; left: 50%; width: 1px; height: 4px; background: var(--divider-color, rgba(255,255,255,.2)); }
 
       /* Usage tab: last-hour power (W) line chart, split by source. */
-      .usage-legend { display: flex; align-items: baseline; gap: 10px; }
+      .usage-legend { display: flex; align-items: baseline; gap: 4px 12px; flex-wrap: wrap; margin: -4px 0 8px; }
+      .usage-legend-item b { font-weight: 700; margin-left: 2px; }
       .usage-legend-item { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--secondary-text-color); }
       .usage-legend-item i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; }
     `;
@@ -1403,13 +1862,13 @@ class EnergyFlowPriceCard extends LitElement {
 
 customElements.define("energy-flow-price-card", EnergyFlowPriceCard);
 
-console.info("%c energy-flow-price-card %c v1.12.2 ", "background:#7dd3fc;color:#0a1420;font-weight:700", "background:#333;color:#fff");
+console.info("%c energy-flow-price-card %c v1.13.0-fork ", "background:#7dd3fc;color:#0a1420;font-weight:700", "background:#333;color:#fff");
 
 window.customCards = window.customCards || [];
 window.customCards.push({
   type: "energy-flow-price-card",
   name: "Energy Flow & Price Card",
-  description: "Compact energy flow (solar/battery/home/grid/cars) plus dynamic electricity & gas prices.",
+  description: "Energy flow (grid/solar/battery/home/devices) with daily kWh, history charts and dynamic electricity prices (fork).",
   preview: true,
   documentationURL: "https://github.com/dennisbest85/energy-flow-price-card",
 });

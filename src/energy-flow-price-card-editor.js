@@ -1,5 +1,5 @@
 import { LitElement, html, css, nothing } from "lit";
-import { DEFAULTS, DEFAULT_PRICE_STOPS, PRICE_PROFILES } from "./constants.js";
+import { DEFAULTS, DEFAULT_PRICE_STOPS, PRICE_PROFILES, DEVICE_PRESETS, DEFAULT_ANCHORS, HISTORY_RANGES } from "./constants.js";
 import { t, resolveLang, SUPPORTED_LANGS } from "./translations.js";
 
 class EnergyFlowPriceCardEditor extends LitElement {
@@ -39,7 +39,7 @@ class EnergyFlowPriceCardEditor extends LitElement {
 
   _resetColors() {
     const next = { ...this._config };
-    ["color_solar", "color_battery", "color_grid", "color_car", "color_home"].forEach((k) => { next[k] = DEFAULTS[k]; });
+    ["color_solar", "color_battery", "color_grid", "color_grid_export", "color_car", "color_home"].forEach((k) => { next[k] = DEFAULTS[k]; });
     next.price_stops = DEFAULT_PRICE_STOPS.map((s) => ({ ...s }));
     this._emit(next);
   }
@@ -53,10 +53,57 @@ class EnergyFlowPriceCardEditor extends LitElement {
     this._emit({ ...this._config, cars });
   }
 
-  _addCar() {
+  _addCar(type = "car") {
     const cars = this._cars().map((c) => ({ ...c }));
-    cars.push({ name: `${this._t("car")} ${cars.length + 1}`, power: "", soc: "" });
+    const preset = DEVICE_PRESETS.find((p) => p.id === type) || DEVICE_PRESETS[0];
+    const name = this._t("dev_" + preset.id);
+    const same = cars.filter((c) => (c.type || "car") === preset.id).length;
+    cars.push({ type: preset.id, icon: preset.icon, name: same ? `${name} ${same + 1}` : name, power: "" });
     this._emit({ ...this._config, cars });
+  }
+
+  _carType(i, type) {
+    const cars = this._cars().map((c) => ({ ...c }));
+    const old = DEVICE_PRESETS.find((p) => p.id === (cars[i].type || "car"));
+    const preset = DEVICE_PRESETS.find((p) => p.id === type) || DEVICE_PRESETS[0];
+    // follow the preset's icon/name unless the user picked their own
+    if (!cars[i].icon || (old && cars[i].icon === old.icon)) cars[i].icon = preset.icon;
+    if (!cars[i].name || (old && cars[i].name === this._t("dev_" + old.id))) cars[i].name = this._t("dev_" + preset.id);
+    cars[i].type = preset.id;
+    if (preset.id !== "car") { delete cars[i].soc; delete cars[i].charging; }
+    this._emit({ ...this._config, cars });
+  }
+
+  _anchorVal(key) {
+    const a = this._config.visual_anchors?.[key];
+    if (a) return a;
+    if (key === "grid") return this._config.solar_position === "left" ? DEFAULT_ANCHORS.grid_right : DEFAULT_ANCHORS.grid_left;
+    return DEFAULT_ANCHORS[key];
+  }
+  _anchorChange(key, axis, ev) {
+    const va = { ...(this._config.visual_anchors || {}) };
+    va[key] = { ...this._anchorVal(key), [axis]: parseInt(ev.target.value, 10) };
+    this._emit({ ...this._config, visual_anchors: va });
+  }
+  _resetAnchors() {
+    const next = { ...this._config };
+    delete next.visual_anchors;
+    this._emit(next);
+  }
+
+  // ha-icon-picker is lazy-loaded by Home Assistant; fall back to a text field until it exists.
+  _iconPicker(value, label, onChange) {
+    if (customElements.get("ha-icon-picker")) {
+      return html`<ha-icon-picker .hass=${this.hass} .value=${value} .label=${label}
+        @value-changed=${(e) => onChange(e.detail?.value ?? "")}></ha-icon-picker>`;
+    }
+    return html`<label class="sel-row"><span>${label}</span>
+      <input class="carname-input" .value=${value} placeholder="mdi:power-plug" @change=${(e) => onChange(e.target.value)} /></label>`;
+  }
+
+  _entity(key, label, domains) {
+    return html`<ha-entity-picker .hass=${this.hass} .value=${this._get(key)} .label=${label}
+      .includeDomains=${domains} allow-custom-entity @value-changed=${(e) => this._pickEntity(key, e)}></ha-entity-picker>`;
   }
 
   _removeCar(i) {
@@ -112,6 +159,7 @@ class EnergyFlowPriceCardEditor extends LitElement {
       { key: "color_solar", label: T("ed_color_solar") },
       { key: "color_battery", label: T("ed_color_battery") },
       { key: "color_grid", label: T("ed_color_grid") },
+      { key: "color_grid_export", label: T("ed_color_grid_export") },
       { key: "color_car", label: T("ed_color_car") },
       { key: "color_home", label: T("ed_color_home") },
     ];
@@ -139,9 +187,35 @@ class EnergyFlowPriceCardEditor extends LitElement {
             <ha-switch .checked=${this._config.use_visual_layout === true} @change=${(e) => this._toggle("use_visual_layout", e)}></ha-switch>
           </ha-formfield>
           ${this._config.use_visual_layout === true ? html`
-            <ha-formfield label=${T("ed_reduce_effects")}>
-              <ha-switch .checked=${this._config.reduce_effects === true} @change=${(e) => this._toggle("reduce_effects", e)}></ha-switch>
-            </ha-formfield>` : nothing}
+            <div class="subblock">
+              <ha-formfield label=${T("ed_reduce_effects")}>
+                <ha-switch .checked=${this._config.reduce_effects === true} @change=${(e) => this._toggle("reduce_effects", e)}></ha-switch>
+              </ha-formfield>
+              ${this._entity("house_image_entity", T("ed_house_image"), ["image"])}
+              <input class="carname-input" .value=${this._config.house_image_url ?? ""} placeholder=${T("ed_house_image_url")}
+                @change=${(e) => { const next = { ...this._config }; if (e.target.value) next.house_image_url = e.target.value.trim(); else delete next.house_image_url; this._emit(next); }} />
+              <details class="anchors">
+                <summary>${T("ed_anchors")}</summary>
+                <div class="note">${T("ed_anchor_note")}</div>
+                ${["grid", "solar", "battery", "devices"].map((k) => {
+                  const a = this._anchorVal(k);
+                  const lbl = k === "devices" ? T("ed_cars") : T(k);
+                  return html`<div class="anchor-row">
+                    <span class="anchor-lbl">${lbl}</span>
+                    <label>${T("ed_anchor_x")} <b>${a.x}%</b><input type="range" min="0" max="100" .value=${a.x} @input=${(e) => this._anchorChange(k, "x", e)} /></label>
+                    <label>${T("ed_anchor_y")} <b>${a.y}%</b><input type="range" min="0" max="100" .value=${a.y} @input=${(e) => this._anchorChange(k, "y", e)} /></label>
+                  </div>`;
+                })}
+                <button class="reset" @click=${() => this._resetAnchors()}>${T("ed_reset_anchors")}</button>
+              </details>
+            </div>` : nothing}
+          <label class="sel-row">
+            <span>${T("ed_solar_position")}</span>
+            <select .value=${this._config.solar_position ?? "right"} @change=${(e) => this._emit({ ...this._config, solar_position: e.target.value })}>
+              <option value="right">${T("ed_solar_right")}</option>
+              <option value="left">${T("ed_solar_left")}</option>
+            </select>
+          </label>
           <label class="sel-row">
             <span>${T("ed_wire_style")}</span>
             <select .value=${this._config.wire_style ?? "dashed"} @change=${(e) => this._emit({ ...this._config, wire_style: e.target.value })}>
@@ -180,11 +254,28 @@ class EnergyFlowPriceCardEditor extends LitElement {
         </div>
 
         <div class="section">
-          <div class="head">
-            ${T("ed_cars")}
-            <button class="add" @click=${() => this._addCar()}>${T("ed_add_car")}</button>
-          </div>
+          <div class="head">${T("ed_daily")}</div>
+          <ha-formfield label=${T("ed_show_daily")}>
+            <ha-switch .checked=${this._config.show_daily_energy !== false} @change=${(e) => this._toggle("show_daily_energy", e)}></ha-switch>
+          </ha-formfield>
+          ${this._config.show_daily_energy !== false ? html`
+            <div class="note">${T("ed_daily_note")}</div>
+            ${this._entity("energy_solar", T("ed_energy_solar"), ["sensor"])}
+            ${this._entity("energy_grid_import", T("ed_energy_grid_import"), ["sensor"])}
+            ${this._entity("energy_grid_export", T("ed_energy_grid_export"), ["sensor"])}
+            ${this._entity("energy_battery_charge", T("ed_energy_battery_charge"), ["sensor"])}
+            ${this._entity("energy_battery_discharge", T("ed_energy_battery_discharge"), ["sensor"])}` : nothing}
+        </div>
+
+        <div class="section">
+          <div class="head">${T("ed_cars")}</div>
           <div class="note">${T("ed_car_note")}</div>
+          <div class="addrow">
+            <select class="addsel" @change=${(e) => { this._newType = e.target.value; }}>
+              ${DEVICE_PRESETS.map((p) => html`<option value=${p.id} ?selected=${(this._newType || "car") === p.id}>${T("dev_" + p.id)}</option>`)}
+            </select>
+            <button class="add" @click=${() => this._addCar(this._newType || "car")}>${T("ed_add_device")}</button>
+          </div>
           <label class="sel-row">
             <span>${T("ed_car_display")}</span>
             <select .value=${this._config.car_mode ?? "scroll"} @change=${(e) => this._emit({ ...this._config, car_mode: e.target.value })}>
@@ -199,42 +290,56 @@ class EnergyFlowPriceCardEditor extends LitElement {
                 @input=${(e) => this._emit({ ...this._config, car_scroll_interval: parseInt(e.target.value, 10) })} />
             </div>` : nothing}
           ${this._cars().length === 0 ? html`<div class="note">${T("ed_no_cars")}</div>` : nothing}
-          ${this._cars().map(
-            (car, i) => html`
+          ${this._cars().map((car, i) => {
+            const type = car.type || "car";
+            const preset = DEVICE_PRESETS.find((p) => p.id === type) || DEVICE_PRESETS[0];
+            return html`
               <div class="carblock">
                 <div class="carhead">
-                  <input
-                    type="text"
-                    class="carname-input"
-                    placeholder=${T("ed_car_name")}
-                    .value=${car.name ?? ""}
-                    @change=${(e) => this._carChange(i, "name", e)}
-                  />
+                  <ha-icon class="devicon" icon=${car.icon || preset.icon}></ha-icon>
+                  <input type="text" class="carname-input" placeholder=${T("ed_car_name")} .value=${car.name ?? ""}
+                    @change=${(e) => this._carChange(i, "name", e)} />
                   <button class="mini" @click=${() => this._removeCar(i)} title=${T("ed_remove_car")}>✕</button>
                 </div>
-                <ha-entity-picker
-                  .hass=${this.hass}
-                  .value=${car.power ?? ""}
-                  .label=${T("ed_car_power")}
-                  allow-custom-entity
-                  @value-changed=${(e) => this._carChange(i, "power", e)}
-                ></ha-entity-picker>
-                <ha-entity-picker
-                  .hass=${this.hass}
-                  .value=${car.charging ?? ""}
-                  .label=${T("ed_car_charging")}
-                  allow-custom-entity
-                  @value-changed=${(e) => this._carChange(i, "charging", e)}
-                ></ha-entity-picker>
-                <ha-entity-picker
-                  .hass=${this.hass}
-                  .value=${car.soc ?? ""}
-                  .label=${T("ed_car_soc")}
-                  allow-custom-entity
-                  @value-changed=${(e) => this._carChange(i, "soc", e)}
-                ></ha-entity-picker>
-              </div>`
-          )}
+                <label class="sel-row">
+                  <span>${T("ed_device_type")}</span>
+                  <select @change=${(e) => this._carType(i, e.target.value)}>
+                    ${DEVICE_PRESETS.map((p) => html`<option value=${p.id} ?selected=${p.id === type}>${T("dev_" + p.id)}</option>`)}
+                  </select>
+                </label>
+                ${this._iconPicker(car.icon || preset.icon, T("ed_device_icon"), (v) => this._carChange(i, "icon", { detail: { value: v } }))}
+                <ha-entity-picker .hass=${this.hass} .value=${car.power ?? ""} .label=${type === "car" ? T("ed_car_power") : T("ed_device_power")}
+                  allow-custom-entity @value-changed=${(e) => this._carChange(i, "power", e)}></ha-entity-picker>
+                ${type === "car" ? html`
+                  <ha-entity-picker .hass=${this.hass} .value=${car.charging ?? ""} .label=${T("ed_car_charging")}
+                    allow-custom-entity @value-changed=${(e) => this._carChange(i, "charging", e)}></ha-entity-picker>
+                  <ha-entity-picker .hass=${this.hass} .value=${car.soc ?? ""} .label=${T("ed_car_soc")}
+                    allow-custom-entity @value-changed=${(e) => this._carChange(i, "soc", e)}></ha-entity-picker>` : nothing}
+                ${this._config.show_daily_energy !== false ? html`
+                  <ha-entity-picker .hass=${this.hass} .value=${car.energy ?? ""} .label=${T("ed_device_energy")}
+                    .includeDomains=${["sensor"]} allow-custom-entity @value-changed=${(e) => this._carChange(i, "energy", e)}></ha-entity-picker>` : nothing}
+                <label class="color">
+                  <span>${T("ed_device_color")}</span>
+                  <span class="colorwrap">
+                    <input type="color" .value=${car.color || this._get("color_car", DEFAULTS.color_car)} @input=${(e) => this._carChange(i, "color", e)} />
+                    ${car.color ? html`<button class="mini" @click=${() => this._carChange(i, "color", { target: { value: "" } })}>✕</button>` : nothing}
+                  </span>
+                </label>
+              </div>`;
+          })}
+        </div>
+
+        <div class="section">
+          <div class="head">${T("ed_actions")}</div>
+          ${[["tap_action", "graph"], ["hold_action", "more-info"]].map(([key, def]) => html`
+            <label class="sel-row">
+              <span>${T("ed_" + key)}</span>
+              <select .value=${this._config[key] ?? def} @change=${(e) => this._emit({ ...this._config, [key]: e.target.value })}>
+                <option value="graph">${T("ed_action_graph")}</option>
+                <option value="more-info">${T("ed_action_more_info")}</option>
+                <option value="none">${T("ed_action_none")}</option>
+              </select>
+            </label>`)}
         </div>
 
         <div class="section">
@@ -282,6 +387,12 @@ class EnergyFlowPriceCardEditor extends LitElement {
 
         <div class="section">
           <div class="head">${T("ed_chart_tabs")}</div>
+          <label class="sel-row">
+            <span>${T("ed_history_range")}</span>
+            <select @change=${(e) => this._emit({ ...this._config, history_range: e.target.value })}>
+              ${HISTORY_RANGES.map((r) => html`<option value=${r.id} ?selected=${r.id === (this._config.history_range ?? "today")}>${T("range_" + r.id)}</option>`)}
+            </select>
+          </label>
           <div class="note">${T("ed_chart_tabs_note")}</div>
           <ha-formfield label=${T("ed_chart_auto_scroll")}>
             <ha-switch .checked=${this._config.chart_auto_scroll === true} @change=${(e) => this._toggle("chart_auto_scroll", e)}></ha-switch>
@@ -377,6 +488,19 @@ class EnergyFlowPriceCardEditor extends LitElement {
       .reset, .add, .mini { cursor: pointer; border: 1px solid var(--primary-color); background: transparent; color: var(--primary-color); border-radius: 8px; padding: 5px 10px; font-size: 12px; }
       .mini { border-color: var(--error-color, #ef4444); color: var(--error-color, #ef4444); padding: 2px 8px; }
       .add { align-self: flex-start; }
+      .subblock { display: flex; flex-direction: column; gap: 8px; padding: 8px 0 4px 12px; border-left: 2px solid var(--divider-color); }
+      .anchors summary { cursor: pointer; font-size: 13px; padding: 4px 0; }
+      .anchor-row { display: grid; grid-template-columns: 1fr; gap: 2px; font-size: 12px; margin: 6px 0; }
+      .anchor-row label { display: flex; align-items: center; gap: 6px; }
+      .anchor-row label b { min-width: 34px; }
+      .anchor-row input[type="range"] { flex: 1; }
+      .anchor-lbl { font-weight: 600; }
+      .addrow { display: flex; gap: 8px; align-items: center; }
+      .addsel { flex: 1; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--divider-color); background: var(--card-background-color); color: var(--primary-text-color); }
+      .addrow .add { align-self: auto; }
+      .devicon { --mdc-icon-size: 22px; color: var(--primary-color); }
+      .colorwrap { display: inline-flex; align-items: center; gap: 6px; }
+      ha-icon-picker { display: block; width: 100%; }
     `;
   }
 }

@@ -88,7 +88,59 @@ export const DEFAULTS = {
   gas_price_entity: "", // optional: shown next to the electricity price in the chart header
   chart_auto_scroll: false, // cycle price -> solar -> battery tabs automatically
   chart_scroll_interval: 8, // seconds between automatic tab switches
+  // ---- fork additions ----
+  solar_position: "right",  // "right" (grid top-left, solar top-right) | "left" (original layout)
+  house_image_entity: "",   // image.* entity whose picture replaces the built-in house photo
+  house_image_url: "",      // alternative: plain URL, e.g. /local/haus.png
+  visual_anchors: null,     // { grid:{x,y}, solar:{x,y}, battery:{x,y}, devices:{x,y} } in % of the picture
+  history_range: "today",   // default time span for solar/grid/battery/usage/device charts
+  show_daily_energy: true,  // small "today kWh" line with a direction arrow under every node
+  tap_action: "graph",      // "graph" | "more-info" | "none"
+  hold_action: "more-info", // "graph" | "more-info" | "none"
+  color_grid_export: "#22c55e", // grid chart: area color for export (below zero)
   // "Usage" tab: last-hour power (W) breakdown by source (solar/battery/grid). Reuses the
   // solar_power/battery_charge_power/battery_discharge_power/grid_power entities already
   // configured for the flow diagram — no separate entities needed.
+};
+
+// Device presets for the "devices" list (formerly cars only). `type: "car"` keeps the
+// car-specific behaviour (charging label, SoC ring, guest-car detection).
+export const DEVICE_PRESETS = [
+  { id: "car", icon: "mdi:car-electric" },
+  { id: "wallbox", icon: "mdi:ev-station" },
+  { id: "ac", icon: "mdi:air-conditioner" },
+  { id: "heatpump", icon: "mdi:heat-pump" },
+  { id: "gardenpump", icon: "mdi:water-pump" },
+  { id: "oven", icon: "mdi:toaster-oven" },
+  { id: "hob", icon: "mdi:stove" },
+  { id: "waterheater", icon: "mdi:water-boiler" },
+  { id: "washer", icon: "mdi:washing-machine" },
+  { id: "dryer", icon: "mdi:tumble-dryer" },
+  { id: "dishwasher", icon: "mdi:dishwasher" },
+  { id: "pool", icon: "mdi:pool" },
+  { id: "heater", icon: "mdi:heating-coil" },
+  { id: "other", icon: "mdi:power-plug" },
+];
+
+// Colors used for device series in the "devices" chart when a device has no own color.
+export const DEVICE_PALETTE = ["#a78bfa", "#f472b6", "#38bdf8", "#fb923c", "#34d399", "#facc15", "#e879f9", "#94a3b8"];
+
+// Selectable time spans for the history charts (hours; "today" = since midnight).
+export const HISTORY_RANGES = [
+  { id: "1h", hours: 1 },
+  { id: "6h", hours: 6 },
+  { id: "today", hours: null },
+  { id: "24h", hours: 24 },
+  { id: "48h", hours: 48 },
+  { id: "7d", hours: 168 },
+];
+export const PRICE_RANGES = [12, 24, 48];
+
+// Default anchor points (in % of the house picture) where each wire ends in the visual layout.
+export const DEFAULT_ANCHORS = {
+  grid_left: { x: 17, y: 52 },  // grid node on the left (default in this fork): left wall
+  grid_right: { x: 80, y: 40 }, // grid node on the right (original layout): right wall
+  solar: { x: 46, y: 31 },      // roof panels
+  battery: { x: 58, y: 63 },
+  devices: { x: 76, y: 81 },
 };

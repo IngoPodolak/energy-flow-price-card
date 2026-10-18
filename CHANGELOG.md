@@ -1,5 +1,18 @@
 # Changelog
 
+## v1.13.0-fork (Fork-Anpassungen)
+
+- Flusslinien laufen jetzt in beiden Ansichten nur waagerecht/senkrecht und starten/enden exakt an den Symbolen.
+- Netz oben links, Solar oben rechts (umschaltbar: `solar_position: left` = Original).
+- Visuelle Ansicht: eigenes Hausbild über Bild-Entität (`house_image_entity`) oder URL (`house_image_url`), Linien-Endpunkte im Bild einstellbar (`visual_anchors`).
+- Statt nur Autos beliebige Geräte (Klima, Wärmepumpe, Gartenpumpe, Backofen, Kochfeld, Durchlauferhitzer, …) mit wählbarem Symbol und optional eigener Farbe.
+- Neuer Diagramm-Tab „Netz“ (Bezug oben / Einspeisung unten) und „Geräte“; „Verbrauch“ zeigt zusätzlich den Hausverbrauch.
+- Zeitspanne für alle Diagramme direkt in der Karte wählbar (1h, 6h, Heute, 24h, 48h, 7 Tage; Preis: 12/24/48h).
+- Schieberegler unter jedem Diagramm, um einen genauen Zeitpunkt auszuwählen.
+- Antippen eines Symbols öffnet das passende Diagramm, langes Drücken die Detailansicht – beides im Editor einstellbar.
+- Unter jedem Wert die heutige Energie in kWh mit Richtungspfeil (berechnet aus dem Verlauf oder aus optionalen kWh-Sensoren).
+- Leistungs-Sensoren in kW werden automatisch in W umgerechnet.
+
 Alle noemenswaardige wijzigingen aan de Energy Flow & Price Card.
 
 ## v1.2.1
