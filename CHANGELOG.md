@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.19.2-fork
+
+- Prognose-Quelle pro Karte wählbar, wenn im Energie-Dashboard mehrere Solaranlagen mit Prognose eingetragen sind (`solar_forecast_entries`).
+- Versionsnummer unten im Editor.
+
 ## v1.19.1-fork
 
 - Solarprognose zu hoch skaliert, wenn die Prognose Zwischenzeitpunkte (Sonnenauf-/-untergang) enthält – jetzt stundenweise wie im Energie-Dashboard.

@@ -122,6 +122,42 @@ class EnergyFlowPriceCardEditor extends LitElement {
       </div>`;
   }
 
+  // Forecast sources from the energy dashboard; with several solar systems each card can pick its own.
+  _forecastSources() {
+    const T = (k) => this._t(k);
+    if (!this._fcSrc && this.hass?.callWS && !this._fcSrcBusy) {
+      this._fcSrcBusy = true;
+      (async () => {
+        let ids = [];
+        try {
+          const prefs = await this.hass.callWS({ type: "energy/get_prefs" });
+          ids = (prefs?.energy_sources || []).filter((x) => x.type === "solar").flatMap((x) => x.config_entry_solar_forecast || []);
+        } catch (e) { /* ignore */ }
+        let titles = {};
+        try {
+          const entries = await this.hass.callWS({ type: "config_entries/get" });
+          for (const e of entries || []) titles[e.entry_id] = `${e.title} (${e.domain})`;
+        } catch (e) { /* ignore */ }
+        this._fcSrc = [...new Set(ids)].map((id) => ({ id, title: titles[id] || id }));
+        this.requestUpdate();
+      })();
+    }
+    const list = this._fcSrc || [];
+    if (list.length < 2) return nothing;
+    const chosen = Array.isArray(this._config.solar_forecast_entries) ? this._config.solar_forecast_entries : [];
+    const toggle = (id, on) => {
+      const set = new Set(chosen.length ? chosen : list.map((x) => x.id));
+      if (on) set.add(id); else set.delete(id);
+      const arr = [...set];
+      const next = { ...this._config };
+      if (!arr.length || arr.length === list.length) delete next.solar_forecast_entries; else next.solar_forecast_entries = arr;
+      this._emit(next);
+    };
+    return html`<div class="note">${T("ed_forecast_sources")}</div>
+      ${list.map((x) => html`<label class="chk"><input type="checkbox" .checked=${!chosen.length || chosen.includes(x.id)}
+        @change=${(e) => toggle(x.id, e.target.checked)} /> ${x.title}</label>`)}`;
+  }
+
   // ha-icon-picker is lazy-loaded by Home Assistant; fall back to a text field until it exists.
   _iconPicker(value, label, onChange) {
     const own = html`<label class="sel-row"><span>${this._t("ed_own_icon")}</span>
@@ -332,6 +368,7 @@ class EnergyFlowPriceCardEditor extends LitElement {
             <ha-formfield label=${T("ed_forecast_node")}>
               <ha-switch .checked=${this._config.solar_forecast_node !== false} @change=${(e) => this._toggle("solar_forecast_node", e)}></ha-switch>
             </ha-formfield>` : nothing}
+          ${this._config.solar_forecast !== false ? this._forecastSources() : nothing}
           <div class="note">${T("ed_forecast_note")}</div>
         </div>
 
@@ -524,6 +561,7 @@ class EnergyFlowPriceCardEditor extends LitElement {
           </div>
         </div>
 
+        <div class="version">Energy Flow & Price Card · v${window.__EFPC_VERSION || "?"}</div>
         ${priceProfile === "default" ? html`
           <div class="section">
             <div class="head">${T("ed_price_scale")}</div>
@@ -571,6 +609,8 @@ class EnergyFlowPriceCardEditor extends LitElement {
       .reset, .add, .mini { cursor: pointer; border: 1px solid var(--primary-color); background: transparent; color: var(--primary-color); border-radius: 8px; padding: 5px 10px; font-size: 12px; }
       .mini { border-color: var(--error-color, #ef4444); color: var(--error-color, #ef4444); padding: 2px 8px; }
       .add { align-self: flex-start; }
+      .version { order: 99; font-size: 11px; color: var(--secondary-text-color); text-align: right; opacity: .8; }
+      .chk { display: flex; align-items: center; gap: 8px; font-size: 13px; }
       .srcblock { display: flex; flex-direction: column; gap: 8px; border: 1px solid var(--divider-color); border-radius: 10px; padding: 10px; }
       .srchead { font-weight: 600; }
       .numwrap { display: inline-flex; align-items: center; gap: 6px; }

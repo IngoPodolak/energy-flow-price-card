@@ -219,6 +219,7 @@ const TRANSLATIONS = {
     ed_forecast_show: "Show forecast in the solar chart (dashed)",
     ed_forecast_node: "Show today's forecast (kWh) under the solar icon",
     ed_forecast_note: "Uses the same forecast as the Home Assistant energy dashboard (e.g. Forecast.Solar or Solcast). It must be configured there for your solar panels.",
+    ed_forecast_sources: "Forecast sources for this card (with several systems tick only the matching one):",
   },
   nl: {
     solar: "Solar",
@@ -534,6 +535,7 @@ const TRANSLATIONS = {
     ed_forecast_show: "Prognose im Solar-Diagramm anzeigen (gestrichelt)",
     ed_forecast_node: "Prognose heute (kWh) unter dem Solar-Symbol anzeigen",
     ed_forecast_note: "Nutzt dieselbe Prognose wie das Energie-Dashboard von Home Assistant (z. B. Forecast.Solar oder Solcast). Sie muss dort unter Einstellungen → Dashboards → Energie bei der Solaranlage eingetragen sein.",
+    ed_forecast_sources: "Prognose-Quellen für diese Karte (bei mehreren Anlagen nur die passende anhaken):",
   },
 };
 

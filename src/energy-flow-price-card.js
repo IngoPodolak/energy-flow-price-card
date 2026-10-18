@@ -1388,8 +1388,9 @@ class EnergyFlowPriceCard extends LitElement {
   async _ensureForecast() {
     if (this._config.solar_forecast === false || !this.hass?.callWS) return;
     const f = this._fc;
-    if (f && (f.busy || Date.now() - f.fetched < 900000)) return;
-    this._fc = { ...(f || { points: [] }), busy: true, fetched: Date.now() };
+    const sel = JSON.stringify(this._config.solar_forecast_entries || []);
+    if (f && f.sel === sel && (f.busy || Date.now() - f.fetched < 900000)) return;
+    this._fc = { ...(f && f.sel === sel ? f : { points: [] }), busy: true, fetched: Date.now(), sel };
     let ids = null;
     try {
       const prefs = await this.hass.callWS({ type: "energy/get_prefs" });
@@ -1403,7 +1404,9 @@ class EnergyFlowPriceCard extends LitElement {
       this.requestUpdate();
       return;
     }
-    const use = ids && ids.length ? ids : Object.keys(data);
+    // optional per-card selection (e.g. two buildings in one Home Assistant)
+    const chosen = Array.isArray(this._config.solar_forecast_entries) ? this._config.solar_forecast_entries.filter(Boolean) : [];
+    const use = chosen.length ? chosen : (ids && ids.length ? ids : Object.keys(data));
     // Like the energy dashboard: collect everything into whole-hour buckets. Some forecasts
     // (e.g. Forecast.Solar) also contain odd timestamps such as sunrise/sunset (07:43),
     // which must not be mistaken for a shorter time step.
@@ -1420,7 +1423,7 @@ class EnergyFlowPriceCard extends LitElement {
     const ts = [...sum.keys()].sort((a, b) => a - b);
     // Wh per hour == average power in W for that hour, drawn at the middle of the hour
     const points = ts.map((t) => ({ t, wh: sum.get(t), v: sum.get(t) }));
-    this._fc = { busy: false, fetched: Date.now(), points, step: HOUR };
+    this._fc = { busy: false, fetched: Date.now(), points, step: HOUR, sel };
     this.requestUpdate();
   }
 
@@ -2236,7 +2239,8 @@ class EnergyFlowPriceCard extends LitElement {
 
 customElements.define("energy-flow-price-card", EnergyFlowPriceCard);
 
-console.info("%c energy-flow-price-card %c v1.19.1-fork ", "background:#7dd3fc;color:#0a1420;font-weight:700", "background:#333;color:#fff");
+window.__EFPC_VERSION = "1.19.2-fork";
+console.info("%c energy-flow-price-card %c v1.19.2-fork ", "background:#7dd3fc;color:#0a1420;font-weight:700", "background:#333;color:#fff");
 
 window.customCards = window.customCards || [];
 window.customCards.push({
