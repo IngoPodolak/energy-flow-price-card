@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.18.0-fork
+
+- Pro Gerät einstellbar: eigene Ausblend-Schwelle in W (`min_power`, leer = globaler Wert) und Anzeige (`show`: Standard / always / active).
+
 ## v1.17.1-fork
 
 - Symbole für Tages-Netzbezug und -Einspeisung vertauscht (korrigiert).

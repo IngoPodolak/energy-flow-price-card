@@ -208,6 +208,11 @@ const TRANSLATIONS = {
     ed_house_label_left: "Left of the picture",
     ed_house_label_above: "Above the picture",
     ed_house_label_below: "Below the picture",
+    ed_dev_show: "Display",
+    ed_dev_show_default: "Follow display zero",
+    ed_dev_show_always: "Always show",
+    ed_dev_show_active: "Only when active",
+    ed_dev_min_power: "Off below (empty = global)",
   },
   nl: {
     solar: "Solar",
@@ -512,6 +517,11 @@ const TRANSLATIONS = {
     ed_house_label_left: "Links neben dem Bild",
     ed_house_label_above: "Über dem Bild",
     ed_house_label_below: "Unter dem Bild",
+    ed_dev_show: "Anzeige",
+    ed_dev_show_default: "Wie „Leere Zweige anzeigen“",
+    ed_dev_show_always: "Immer anzeigen",
+    ed_dev_show_active: "Nur wenn aktiv",
+    ed_dev_min_power: "Aus unter (leer = global)",
   },
 };
 

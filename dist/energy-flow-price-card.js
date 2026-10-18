@@ -427,6 +427,11 @@ const TRANSLATIONS = {
     ed_house_label_left: "Left of the picture",
     ed_house_label_above: "Above the picture",
     ed_house_label_below: "Below the picture",
+    ed_dev_show: "Display",
+    ed_dev_show_default: "Follow display zero",
+    ed_dev_show_always: "Always show",
+    ed_dev_show_active: "Only when active",
+    ed_dev_min_power: "Off below (empty = global)",
   },
   nl: {
     solar: "Solar",
@@ -731,6 +736,11 @@ const TRANSLATIONS = {
     ed_house_label_left: "Links neben dem Bild",
     ed_house_label_above: "Über dem Bild",
     ed_house_label_below: "Unter dem Bild",
+    ed_dev_show: "Anzeige",
+    ed_dev_show_default: "Wie „Leere Zweige anzeigen“",
+    ed_dev_show_always: "Immer anzeigen",
+    ed_dev_show_active: "Nur wenn aktiv",
+    ed_dev_min_power: "Aus unter (leer = global)",
   },
 };
 
@@ -1128,6 +1138,18 @@ class EnergyFlowPriceCardEditor extends LitElement {
                 ${this._config.show_daily_energy !== false ? html`
                   <ha-entity-picker .hass=${this.hass} .value=${car.energy ?? ""} .label=${T("ed_device_energy")}
                     .includeDomains=${["sensor"]} allow-custom-entity @value-changed=${(e) => this._carChange(i, "energy", e)}></ha-entity-picker>` : nothing}
+                <label class="sel-row">
+                  <span>${T("ed_dev_show")}</span>
+                  <select @change=${(e) => this._carChange(i, "show", { target: { value: e.target.value === "default" ? "" : e.target.value } })}>
+                    ${["default", "always", "active"].map((v) => html`<option value=${v} ?selected=${(car.show || "default") === v}>${T("ed_dev_show_" + v)}</option>`)}
+                  </select>
+                </label>
+                <label class="sel-row">
+                  <span>${T("ed_dev_min_power")}</span>
+                  <span class="numwrap"><input class="num" type="number" min="0" step="1" placeholder=${String(this._config.flow_min_power ?? 5)}
+                    .value=${car.min_power ?? ""}
+                    @change=${(e) => { const cars = this._cars().map((x) => ({ ...x })); const v = parseFloat(e.target.value); if (isNaN(v)) delete cars[i].min_power; else cars[i].min_power = Math.max(0, v); this._emit({ ...this._config, cars }); }} /> W</span>
+                </label>
                 <label class="color">
                   <span>${T("ed_device_color")}</span>
                   <span class="colorwrap">
@@ -1683,12 +1705,12 @@ class EnergyFlowPriceCard extends LitElement {
   // that oscillates rapidly (a jittery sensor near 0 W) settles instead of snapping the
   // line's shape back and forth instantly.
   // Returns { show, moving, duration (s), fade ('in'|'out'|null), reversed, dirSwap }.
-  _wireState(key, power, reversed = false) {
+  _wireState(key, power, reversed = false, thr = null) {
     this._wires = this._wires || {};
     const now = Date.now();
     const c = this._config;
     const p = power === null ? 0 : Math.abs(power);
-    const active = p > this._thr();
+    const active = p > (thr ?? this._thr());
     let w = this._wires[key];
     if (!w) w = this._wires[key] = { lastActive: active ? now : 0, shownSince: active ? now : 0, wasShown: active, dispReversed: reversed, dirPhase: "idle", dirPhaseStart: 0 };
 
@@ -2159,7 +2181,9 @@ class EnergyFlowPriceCard extends LitElement {
     const items = devs.map((d, i) => {
       const p = pw(hass, d.power);
       const soc = d.type === "car" ? num(hass, d.soc) : null;
-      const powerActive = act(p);
+      // per-device threshold (falls back to the global "hide line below" value)
+      const dThr = d.min_power !== undefined && d.min_power !== "" && !isNaN(parseFloat(d.min_power)) ? Math.max(0, parseFloat(d.min_power)) : thr;
+      const powerActive = p !== null && Math.abs(p) > dThr;
       const chargingState = d.charging ? hass.states?.[d.charging]?.state : null;
       const isGuest = d.type === "car" && !!d.charging && powerActive && chargingState !== "on";
       if (isGuest) {
@@ -2176,6 +2200,8 @@ class EnergyFlowPriceCard extends LitElement {
         color: d.color,
         day: daily ? daily.devices[i] : null,
         entity: d.power || d.soc,
+        thr: dThr,
+        showMode: d.show || "default",
       };
     });
     const allDevs = [...items, ...guests];
@@ -2185,8 +2211,8 @@ class EnergyFlowPriceCard extends LitElement {
     const rowMode = devMode === "row" && allDevs.length > 1;
     const rowDevs = rowMode
       ? allDevs
-          .map((d, idx) => ({ ...d, idx, ws: this._wireState("dev:" + idx, d.active ? d.power : 0, true) }))
-          .filter((d) => c.display_zero || d.ws.show)
+          .map((d, idx) => ({ ...d, idx, ws: this._wireState("dev:" + idx, d.active ? d.power : 0, true, d.thr ?? thr) }))
+          .filter((d) => d.showMode === "always" || (d.showMode === "active" ? d.ws.show : (c.display_zero || d.ws.show)))
       : [];
     const devsShown = allDevs.length ? allDevs : [{ name: this._t("devices"), power: null, soc: null, active: false, hasEnt: false, icon: "mdi:power-plug", isCar: false, day: null }];
 
@@ -3462,7 +3488,7 @@ class EnergyFlowPriceCard extends LitElement {
 
 customElements.define("energy-flow-price-card", EnergyFlowPriceCard);
 
-console.info("%c energy-flow-price-card %c v1.17.1-fork ", "background:#7dd3fc;color:#0a1420;font-weight:700", "background:#333;color:#fff");
+console.info("%c energy-flow-price-card %c v1.18.0-fork ", "background:#7dd3fc;color:#0a1420;font-weight:700", "background:#333;color:#fff");
 
 window.customCards = window.customCards || [];
 window.customCards.push({

@@ -56,6 +56,8 @@ cars:                          # Schlüssel heißt weiter "cars", enthält aber 
     power: sensor.wp_power
     energy: sensor.wp_energy   # optional (kWh)
     color: "#38bdf8"           # optional
+    min_power: 30              # optional: unter 30 W gilt das Gerät als aus (sonst globaler Wert)
+    show: active               # optional: always = immer zeigen, active = nur wenn aktiv
 ```
 
 **Bauen:** `npm install && npm run build` – oder ohne Node: `python3 build.py`.

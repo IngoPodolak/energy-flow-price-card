@@ -374,6 +374,18 @@ class EnergyFlowPriceCardEditor extends LitElement {
                 ${this._config.show_daily_energy !== false ? html`
                   <ha-entity-picker .hass=${this.hass} .value=${car.energy ?? ""} .label=${T("ed_device_energy")}
                     .includeDomains=${["sensor"]} allow-custom-entity @value-changed=${(e) => this._carChange(i, "energy", e)}></ha-entity-picker>` : nothing}
+                <label class="sel-row">
+                  <span>${T("ed_dev_show")}</span>
+                  <select @change=${(e) => this._carChange(i, "show", { target: { value: e.target.value === "default" ? "" : e.target.value } })}>
+                    ${["default", "always", "active"].map((v) => html`<option value=${v} ?selected=${(car.show || "default") === v}>${T("ed_dev_show_" + v)}</option>`)}
+                  </select>
+                </label>
+                <label class="sel-row">
+                  <span>${T("ed_dev_min_power")}</span>
+                  <span class="numwrap"><input class="num" type="number" min="0" step="1" placeholder=${String(this._config.flow_min_power ?? 5)}
+                    .value=${car.min_power ?? ""}
+                    @change=${(e) => { const cars = this._cars().map((x) => ({ ...x })); const v = parseFloat(e.target.value); if (isNaN(v)) delete cars[i].min_power; else cars[i].min_power = Math.max(0, v); this._emit({ ...this._config, cars }); }} /> W</span>
+                </label>
                 <label class="color">
                   <span>${T("ed_device_color")}</span>
                   <span class="colorwrap">
