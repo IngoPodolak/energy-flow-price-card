@@ -91,6 +91,37 @@ class EnergyFlowPriceCardEditor extends LitElement {
     this._emit(next);
   }
 
+  // Grid / battery source: one signed entity or two separate ones (power or daily energy).
+  _srcBlock(kind, energy) {
+    const T = (k) => this._t(k);
+    const c = this._config;
+    const modeKey = energy ? `energy_${kind}_mode` : `${kind}_mode`;
+    const defMode = energy ? "dual" : (kind === "grid" ? "single" : "dual");
+    const mode = c[modeKey] ?? defMode;
+    const single = energy ? `energy_${kind}` : `${kind}_power`;
+    const invKey = energy ? `energy_${kind}_invert` : `${kind}_invert`;
+    const pos = energy ? (kind === "grid" ? "energy_grid_import" : "energy_battery_discharge") : (kind === "grid" ? "grid_import_power" : "battery_discharge_power");
+    const neg = energy ? (kind === "grid" ? "energy_grid_export" : "energy_battery_charge") : (kind === "grid" ? "grid_export_power" : "battery_charge_power");
+    const sfx = energy ? "_e" : "";
+    return html`
+      <div class="srcblock">
+        <label class="sel-row">
+          <span class="srchead">${T(`ed_src_${kind}${sfx}`)}</span>
+          <select @change=${(e) => this._emit({ ...this._config, [modeKey]: e.target.value })}>
+            <option value="single" ?selected=${mode === "single"}>${T("ed_src_single")}</option>
+            <option value="dual" ?selected=${mode === "dual"}>${T("ed_src_dual")}</option>
+          </select>
+        </label>
+        ${mode === "single" ? html`
+          ${this._entity(single, T(`ed_${kind}_single${sfx}`), energy ? ["sensor"] : undefined)}
+          <ha-formfield label=${T(`ed_${kind}_invert`)}>
+            <ha-switch .checked=${c[invKey] === true} @change=${(e) => this._toggle(invKey, e)}></ha-switch>
+          </ha-formfield>` : html`
+          ${this._entity(pos, T(`ed_${kind}_pos${sfx}`), energy ? ["sensor"] : undefined)}
+          ${this._entity(neg, T(`ed_${kind}_neg${sfx}`), energy ? ["sensor"] : undefined)}`}
+      </div>`;
+  }
+
   // ha-icon-picker is lazy-loaded by Home Assistant; fall back to a text field until it exists.
   _iconPicker(value, label, onChange) {
     if (customElements.get("ha-icon-picker")) {
@@ -148,9 +179,6 @@ class EnergyFlowPriceCardEditor extends LitElement {
 
     const entityFields = [
       { key: "solar_power", label: T("ed_solar_power") },
-      { key: "grid_power", label: T("ed_grid_power") },
-      { key: "battery_charge_power", label: T("ed_battery_charge") },
-      { key: "battery_discharge_power", label: T("ed_battery_discharge") },
       { key: "battery_soc", label: T("ed_battery_soc") },
       ...(useTibberService ? [] : [{ key: "price_entity", label: T("ed_price_entity") }]),
       { key: "gas_price_entity", label: T("ed_gas_price_entity") },
@@ -249,6 +277,8 @@ class EnergyFlowPriceCardEditor extends LitElement {
             <ha-switch .checked=${useTibberService} @change=${(e) => this._toggle("price_use_tibber_service", e)}></ha-switch>
           </ha-formfield>
           <div class="note">${T("ed_price_tibber_service_note")}</div>
+          ${this._srcBlock("grid", false)}
+          ${this._srcBlock("battery", false)}
           ${entityFields.map(
             (f) => html`
               <ha-entity-picker
@@ -269,10 +299,8 @@ class EnergyFlowPriceCardEditor extends LitElement {
           ${this._config.show_daily_energy !== false ? html`
             <div class="note">${T("ed_daily_note")}</div>
             ${this._entity("energy_solar", T("ed_energy_solar"), ["sensor"])}
-            ${this._entity("energy_grid_import", T("ed_energy_grid_import"), ["sensor"])}
-            ${this._entity("energy_grid_export", T("ed_energy_grid_export"), ["sensor"])}
-            ${this._entity("energy_battery_charge", T("ed_energy_battery_charge"), ["sensor"])}
-            ${this._entity("energy_battery_discharge", T("ed_energy_battery_discharge"), ["sensor"])}` : nothing}
+            ${this._srcBlock("grid", true)}
+            ${this._srcBlock("battery", true)}` : nothing}
         </div>
 
         <div class="section">
@@ -499,6 +527,8 @@ class EnergyFlowPriceCardEditor extends LitElement {
       .reset, .add, .mini { cursor: pointer; border: 1px solid var(--primary-color); background: transparent; color: var(--primary-color); border-radius: 8px; padding: 5px 10px; font-size: 12px; }
       .mini { border-color: var(--error-color, #ef4444); color: var(--error-color, #ef4444); padding: 2px 8px; }
       .add { align-self: flex-start; }
+      .srcblock { display: flex; flex-direction: column; gap: 8px; border: 1px solid var(--divider-color); border-radius: 10px; padding: 10px; }
+      .srchead { font-weight: 600; }
       .numwrap { display: inline-flex; align-items: center; gap: 6px; }
       .num { width: 80px; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--divider-color); background: var(--card-background-color); color: var(--primary-text-color); }
       .subblock { display: flex; flex-direction: column; gap: 8px; padding: 8px 0 4px 12px; border-left: 2px solid var(--divider-color); }

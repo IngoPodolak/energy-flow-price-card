@@ -25,6 +25,12 @@ visual_anchors:                # optional: Linien-Endpunkte im Bild in % (x von 
   battery: { x: 58, y: 63 }
   devices: { x: 76, y: 81 }
 history_range: today           # 1h | 6h | today | 24h | 48h | 7d
+grid_mode: single              # single = grid_power (+ Bezug / − Einspeisung) | dual = grid_import_power + grid_export_power
+grid_invert: false             # nur single: Vorzeichen umkehren
+battery_mode: dual             # dual = battery_charge_power + battery_discharge_power | single = battery_power (+ Entladen / − Laden)
+battery_invert: false          # nur single: Vorzeichen umkehren
+energy_grid_mode: dual         # Tageswert Netz: dual = energy_grid_import + energy_grid_export | single = energy_grid
+energy_battery_mode: dual      # Tageswert Akku: dual = energy_battery_discharge + energy_battery_charge | single = energy_battery
 flow_min_power: 5              # W: darunter wird die Linie ausgeblendet
 car_mode: row                  # row = alle Geräte gleichzeitig | scroll | merged
 color_day_in: "#34d399"        # Tageswert ins Haus

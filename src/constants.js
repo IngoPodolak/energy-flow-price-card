@@ -101,6 +101,12 @@ export const DEFAULTS = {
   flow_min_power: 5,        // W: below this a branch counts as idle (line hidden; idle devices hidden unless display_zero)
   color_day_in: "#34d399",  // daily kWh into the house
   color_day_out: "#fb923c", // daily kWh out of the house
+  grid_mode: "single",      // "single" (grid_power, signed) | "dual" (grid_import_power + grid_export_power)
+  grid_invert: false,       // single: true = positive means export
+  battery_mode: "dual",     // "dual" (battery_charge_power + battery_discharge_power) | "single" (battery_power, signed)
+  battery_invert: false,    // single: true = positive means charging
+  energy_grid_mode: "dual", // daily kWh: "dual" (energy_grid_import + energy_grid_export) | "single" (energy_grid, signed)
+  energy_battery_mode: "dual",
   price_show_minmax: false, // mark each day's highest / lowest price in the price chart
   // "Usage" tab: last-hour power (W) breakdown by source (solar/battery/grid). Reuses the
   // solar_power/battery_charge_power/battery_discharge_power/grid_power entities already

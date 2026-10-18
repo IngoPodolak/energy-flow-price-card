@@ -134,6 +134,12 @@ const DEFAULTS = {
   flow_min_power: 5,        // W: below this a branch counts as idle (line hidden; idle devices hidden unless display_zero)
   color_day_in: "#34d399",  // daily kWh into the house
   color_day_out: "#fb923c", // daily kWh out of the house
+  grid_mode: "single",      // "single" (grid_power, signed) | "dual" (grid_import_power + grid_export_power)
+  grid_invert: false,       // single: true = positive means export
+  battery_mode: "dual",     // "dual" (battery_charge_power + battery_discharge_power) | "single" (battery_power, signed)
+  battery_invert: false,    // single: true = positive means charging
+  energy_grid_mode: "dual", // daily kWh: "dual" (energy_grid_import + energy_grid_export) | "single" (energy_grid, signed)
+  energy_battery_mode: "dual",
   price_show_minmax: false, // mark each day's highest / lowest price in the price chart
   // "Usage" tab: last-hour power (W) breakdown by source (solar/battery/grid). Reuses the
   // solar_power/battery_charge_power/battery_discharge_power/grid_power entities already
@@ -365,6 +371,26 @@ const TRANSLATIONS = {
     ed_color_day_out: "Color daily value out of house",
     ed_price_minmax: "Mark daily highest and lowest price",
     ed_car_note: "Cars and any other devices. With \"All at once\" a devices hub (total) appears bottom-right and every device is shown below with its own line.",
+    ed_src_grid: "Grid – power",
+    ed_src_battery: "Battery – power",
+    ed_src_grid_e: "Grid – daily value (optional)",
+    ed_src_battery_e: "Battery – daily value (optional)",
+    ed_src_single: "1 signed entity",
+    ed_src_dual: "2 separate entities",
+    ed_grid_single: "Grid power (W, + = import, − = export)",
+    ed_grid_pos: "Grid import (W)",
+    ed_grid_neg: "Grid export (W)",
+    ed_grid_single_e: "Grid energy (kWh, + = import, − = export)",
+    ed_grid_pos_e: "Grid import energy (kWh)",
+    ed_grid_neg_e: "Grid export energy (kWh)",
+    ed_grid_invert: "Invert sign (+ = export)",
+    ed_battery_single: "Battery power (W, + = discharge, − = charge)",
+    ed_battery_pos: "Battery discharge (W)",
+    ed_battery_neg: "Battery charge (W)",
+    ed_battery_single_e: "Battery energy (kWh, + = discharge, − = charge)",
+    ed_battery_pos_e: "Battery discharged energy (kWh)",
+    ed_battery_neg_e: "Battery charged energy (kWh)",
+    ed_battery_invert: "Invert sign (+ = charge)",
   },
   nl: {
     solar: "Solar",
@@ -641,6 +667,26 @@ const TRANSLATIONS = {
     ed_color_day_out: "Farbe Tageswert aus dem Haus",
     ed_price_minmax: "Tageshöchst- und Tagestiefstpreis einzeichnen",
     ed_car_note: "Autos und beliebige andere Geräte (Klima, Wärmepumpe, Backofen …). Bei „Alle gleichzeitig“ erscheint unten rechts ein Geräte-Knoten mit der Summe und darunter jedes Gerät mit eigener Linie.",
+    ed_src_grid: "Netz – Leistung",
+    ed_src_battery: "Akku – Leistung",
+    ed_src_grid_e: "Netz – Tageswert (optional)",
+    ed_src_battery_e: "Akku – Tageswert (optional)",
+    ed_src_single: "1 Entität mit Vorzeichen",
+    ed_src_dual: "2 getrennte Entitäten",
+    ed_grid_single: "Netz-Leistung (W, + = Bezug, − = Einspeisung)",
+    ed_grid_pos: "Netzbezug (W)",
+    ed_grid_neg: "Einspeisung (W)",
+    ed_grid_single_e: "Netz Energie (kWh, + = Bezug, − = Einspeisung)",
+    ed_grid_pos_e: "Netzbezug Energie (kWh)",
+    ed_grid_neg_e: "Einspeisung Energie (kWh)",
+    ed_grid_invert: "Vorzeichen umkehren (+ = Einspeisung)",
+    ed_battery_single: "Akku-Leistung (W, + = Entladen, − = Laden)",
+    ed_battery_pos: "Akku entladen (W)",
+    ed_battery_neg: "Akku laden (W)",
+    ed_battery_single_e: "Akku Energie (kWh, + = Entladen, − = Laden)",
+    ed_battery_pos_e: "Akku entladen Energie (kWh)",
+    ed_battery_neg_e: "Akku geladen Energie (kWh)",
+    ed_battery_invert: "Vorzeichen umkehren (+ = Laden)",
   },
 };
 
@@ -755,6 +801,37 @@ class EnergyFlowPriceCardEditor extends LitElement {
     this._emit(next);
   }
 
+  // Grid / battery source: one signed entity or two separate ones (power or daily energy).
+  _srcBlock(kind, energy) {
+    const T = (k) => this._t(k);
+    const c = this._config;
+    const modeKey = energy ? `energy_${kind}_mode` : `${kind}_mode`;
+    const defMode = energy ? "dual" : (kind === "grid" ? "single" : "dual");
+    const mode = c[modeKey] ?? defMode;
+    const single = energy ? `energy_${kind}` : `${kind}_power`;
+    const invKey = energy ? `energy_${kind}_invert` : `${kind}_invert`;
+    const pos = energy ? (kind === "grid" ? "energy_grid_import" : "energy_battery_discharge") : (kind === "grid" ? "grid_import_power" : "battery_discharge_power");
+    const neg = energy ? (kind === "grid" ? "energy_grid_export" : "energy_battery_charge") : (kind === "grid" ? "grid_export_power" : "battery_charge_power");
+    const sfx = energy ? "_e" : "";
+    return html`
+      <div class="srcblock">
+        <label class="sel-row">
+          <span class="srchead">${T(`ed_src_${kind}${sfx}`)}</span>
+          <select @change=${(e) => this._emit({ ...this._config, [modeKey]: e.target.value })}>
+            <option value="single" ?selected=${mode === "single"}>${T("ed_src_single")}</option>
+            <option value="dual" ?selected=${mode === "dual"}>${T("ed_src_dual")}</option>
+          </select>
+        </label>
+        ${mode === "single" ? html`
+          ${this._entity(single, T(`ed_${kind}_single${sfx}`), energy ? ["sensor"] : undefined)}
+          <ha-formfield label=${T(`ed_${kind}_invert`)}>
+            <ha-switch .checked=${c[invKey] === true} @change=${(e) => this._toggle(invKey, e)}></ha-switch>
+          </ha-formfield>` : html`
+          ${this._entity(pos, T(`ed_${kind}_pos${sfx}`), energy ? ["sensor"] : undefined)}
+          ${this._entity(neg, T(`ed_${kind}_neg${sfx}`), energy ? ["sensor"] : undefined)}`}
+      </div>`;
+  }
+
   // ha-icon-picker is lazy-loaded by Home Assistant; fall back to a text field until it exists.
   _iconPicker(value, label, onChange) {
     if (customElements.get("ha-icon-picker")) {
@@ -812,9 +889,6 @@ class EnergyFlowPriceCardEditor extends LitElement {
 
     const entityFields = [
       { key: "solar_power", label: T("ed_solar_power") },
-      { key: "grid_power", label: T("ed_grid_power") },
-      { key: "battery_charge_power", label: T("ed_battery_charge") },
-      { key: "battery_discharge_power", label: T("ed_battery_discharge") },
       { key: "battery_soc", label: T("ed_battery_soc") },
       ...(useTibberService ? [] : [{ key: "price_entity", label: T("ed_price_entity") }]),
       { key: "gas_price_entity", label: T("ed_gas_price_entity") },
@@ -913,6 +987,8 @@ class EnergyFlowPriceCardEditor extends LitElement {
             <ha-switch .checked=${useTibberService} @change=${(e) => this._toggle("price_use_tibber_service", e)}></ha-switch>
           </ha-formfield>
           <div class="note">${T("ed_price_tibber_service_note")}</div>
+          ${this._srcBlock("grid", false)}
+          ${this._srcBlock("battery", false)}
           ${entityFields.map(
             (f) => html`
               <ha-entity-picker
@@ -933,10 +1009,8 @@ class EnergyFlowPriceCardEditor extends LitElement {
           ${this._config.show_daily_energy !== false ? html`
             <div class="note">${T("ed_daily_note")}</div>
             ${this._entity("energy_solar", T("ed_energy_solar"), ["sensor"])}
-            ${this._entity("energy_grid_import", T("ed_energy_grid_import"), ["sensor"])}
-            ${this._entity("energy_grid_export", T("ed_energy_grid_export"), ["sensor"])}
-            ${this._entity("energy_battery_charge", T("ed_energy_battery_charge"), ["sensor"])}
-            ${this._entity("energy_battery_discharge", T("ed_energy_battery_discharge"), ["sensor"])}` : nothing}
+            ${this._srcBlock("grid", true)}
+            ${this._srcBlock("battery", true)}` : nothing}
         </div>
 
         <div class="section">
@@ -1163,6 +1237,8 @@ class EnergyFlowPriceCardEditor extends LitElement {
       .reset, .add, .mini { cursor: pointer; border: 1px solid var(--primary-color); background: transparent; color: var(--primary-color); border-radius: 8px; padding: 5px 10px; font-size: 12px; }
       .mini { border-color: var(--error-color, #ef4444); color: var(--error-color, #ef4444); padding: 2px 8px; }
       .add { align-self: flex-start; }
+      .srcblock { display: flex; flex-direction: column; gap: 8px; border: 1px solid var(--divider-color); border-radius: 10px; padding: 10px; }
+      .srchead { font-weight: 600; }
       .numwrap { display: inline-flex; align-items: center; gap: 6px; }
       .num { width: 80px; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--divider-color); background: var(--card-background-color); color: var(--primary-text-color); }
       .subblock { display: flex; flex-direction: column; gap: 8px; padding: 8px 0 4px 12px; border-left: 2px solid var(--divider-color); }
@@ -1470,6 +1546,52 @@ class EnergyFlowPriceCard extends LitElement {
     return h;
   }
 
+  // Grid / battery can come from ONE signed entity or TWO separate entities.
+  // Normalised sign: + = towards the house (grid import, battery discharge),
+  //                  − = away from the house (grid export, battery charge).
+  _src(kind) {
+    const c = this._config;
+    if (kind === "grid") {
+      if (c.grid_mode === "dual") {
+        return { dual: true, pos: c.grid_import_power, neg: c.grid_export_power, entities: [c.grid_import_power, c.grid_export_power].filter(Boolean) };
+      }
+      return { dual: false, signed: c.grid_power, sign: c.grid_invert ? -1 : 1, entities: [c.grid_power].filter(Boolean) };
+    }
+    if (c.battery_mode === "single") {
+      return { dual: false, signed: c.battery_power, sign: c.battery_invert ? -1 : 1, entities: [c.battery_power].filter(Boolean) };
+    }
+    return { dual: true, pos: c.battery_discharge_power, neg: c.battery_charge_power, entities: [c.battery_discharge_power, c.battery_charge_power].filter(Boolean) };
+  }
+
+  _srcValue(kind) {
+    const s = this._src(kind);
+    if (!s.dual) { const v = pw(this.hass, s.signed); return v === null ? null : v * s.sign; }
+    const a = pw(this.hass, s.pos), b = pw(this.hass, s.neg);
+    if (a === null && b === null) return null;
+    return Math.abs(a || 0) - Math.abs(b || 0);
+  }
+
+  _srcSeries(kind, byEntity) {
+    const s = this._src(kind);
+    if (!s.dual) return (byEntity[s.signed] || []).map((p) => ({ t: p.t, v: p.v * s.sign }));
+    const a = byEntity[s.pos] || [], b = byEntity[s.neg] || [];
+    if (!a.length && !b.length) return [];
+    return mergeSeries([a, b], ([x, y]) => Math.abs(x) - Math.abs(y));
+  }
+
+  // Live values in the shape the flow/home calculation expects.
+  _liveV() {
+    const g = this._srcValue("grid");
+    const b = this._srcValue("battery");
+    return {
+      solar: pw(this.hass, this._config.solar_power),
+      grid: g,
+      charge: b === null ? null : Math.max(0, -b),
+      discharge: b === null ? null : Math.max(0, b),
+      soc: num(this.hass, this._config.battery_soc),
+    };
+  }
+
   // Power (W) below which a branch counts as idle: its line is hidden and, unless
   // display_zero is on, an idle device disappears from the device row.
   _thr() {
@@ -1706,8 +1828,8 @@ class EnergyFlowPriceCard extends LitElement {
     const c = this._config;
     if (!this.hass || c.show_daily_energy === false || !this.hass.callApi) return;
     const devs = this._devices();
-    const powers = [...new Set([c.solar_power, c.grid_power, c.battery_charge_power, c.battery_discharge_power, ...devs.map((d) => d.power)].filter(Boolean))];
-    const energies = [...new Set([c.energy_solar, c.energy_grid_import, c.energy_grid_export, c.energy_battery_charge, c.energy_battery_discharge, ...devs.map((d) => d.energy)].filter(Boolean))];
+    const powers = [...new Set([c.solar_power, ...this._src("grid").entities, ...this._src("battery").entities, ...devs.map((d) => d.power)].filter(Boolean))];
+    const energies = [...new Set([c.energy_solar, ...this._energySrc("grid").entities, ...this._energySrc("battery").entities, ...devs.map((d) => d.energy)].filter(Boolean))];
     const midnight = startOfToday();
     const key = powers.join(",");
     if (!this._day || this._day.midnight !== midnight || this._day.key !== key) {
@@ -1803,13 +1925,14 @@ class EnergyFlowPriceCard extends LitElement {
       if (energyEnt) return this._dayStats?.[energyEnt]?.v ?? null;
       return integ ? integ[field] : null;
     };
-    const grid = I(c.grid_power);
+    const gd = this._srcDay("grid", I);
+    const bd = this._srcDay("battery", I);
     const r = {
       solar: pick(c.energy_solar, I(c.solar_power), "pos"),
-      gridIn: pick(c.energy_grid_import, grid, "pos"),
-      gridOut: pick(c.energy_grid_export, grid, "neg"),
-      battOut: pick(c.energy_battery_discharge, I(c.battery_discharge_power), "pos"),
-      battIn: pick(c.energy_battery_charge, I(c.battery_charge_power), "pos"),
+      gridIn: gd.in,
+      gridOut: gd.out,
+      battOut: bd.in,  // discharge = into the house
+      battIn: bd.out,  // charge = out of the house
       devices: devs.map((d) => pick(d.energy, I(d.power), "pos")),
     };
     const parts = [r.solar, r.gridIn, r.battOut, r.gridOut, r.battIn];
@@ -1819,6 +1942,49 @@ class EnergyFlowPriceCard extends LitElement {
       r.home = Math.max(0, h);
     } else r.home = null;
     return r;
+  }
+
+  // Daily energy sources for grid/battery: two kWh entities, one signed kWh entity, or none.
+  _energySrc(kind) {
+    const c = this._config;
+    const mode = kind === "grid" ? c.energy_grid_mode : c.energy_battery_mode;
+    if (mode === "single") {
+      const e = kind === "grid" ? c.energy_grid : c.energy_battery;
+      const inv = kind === "grid" ? c.energy_grid_invert : c.energy_battery_invert;
+      return { dual: false, signed: e, sign: inv ? -1 : 1, entities: [e].filter(Boolean) };
+    }
+    const pos = kind === "grid" ? c.energy_grid_import : c.energy_battery_discharge;
+    const neg = kind === "grid" ? c.energy_grid_export : c.energy_battery_charge;
+    return { dual: true, pos, neg, entities: [pos, neg].filter(Boolean) };
+  }
+
+  // { in, out } kWh today for grid/battery (in = towards the house).
+  _srcDay(kind, I) {
+    const st = (e) => this._dayStats?.[e]?.v ?? null;
+    const es = this._energySrc(kind);
+    if (es.entities.length) {
+      if (!es.dual) {
+        const v = st(es.signed);
+        if (v == null) return { in: null, out: null };
+        const x = v * es.sign;
+        return x >= 0 ? { in: x, out: null } : { in: null, out: -x };
+      }
+      // two kWh entities; a missing one falls back to the power history below
+      const fromPower = this._srcDay2(kind, I);
+      return { in: es.pos ? st(es.pos) : fromPower.in, out: es.neg ? st(es.neg) : fromPower.out };
+    }
+    return this._srcDay2(kind, I);
+  }
+
+  _srcDay2(kind, I) {
+    const s = this._src(kind);
+    if (!s.dual) {
+      const r = I(s.signed);
+      if (!r) return { in: null, out: null };
+      return s.sign > 0 ? { in: r.pos, out: r.neg } : { in: r.neg, out: r.pos };
+    }
+    const a = I(s.pos), b = I(s.neg);
+    return { in: a ? a.pos : null, out: b ? b.pos : null };
   }
 
   // ---------------------------------------------------------------------------
@@ -1885,9 +2051,9 @@ class EnergyFlowPriceCard extends LitElement {
 
   _nodeEntity(key) {
     const c = this._config;
-    if (key === "grid") return c.grid_power || c.energy_grid_import;
+    if (key === "grid") return this._src("grid").entities[0] || this._energySrc("grid").entities[0];
     if (key === "solar") return c.solar_power || c.energy_solar;
-    if (key === "battery") return c.battery_soc || c.battery_charge_power || c.battery_discharge_power;
+    if (key === "battery") return c.battery_soc || this._src("battery").entities[0];
     if (key.startsWith("dev:")) return this._devEntities?.[parseInt(key.slice(4), 10)] || null;
     if (key === "devices") {
       const devs = this._devices().filter((d) => d.power || d.soc);
@@ -1901,13 +2067,7 @@ class EnergyFlowPriceCard extends LitElement {
   _renderFlow() {
     const c = this._config;
     const hass = this.hass;
-    const v = {
-      solar: pw(hass, c.solar_power),
-      grid: pw(hass, c.grid_power),
-      charge: pw(hass, c.battery_charge_power),
-      discharge: pw(hass, c.battery_discharge_power),
-      soc: num(hass, c.battery_soc),
-    };
+    const v = this._liveV();
     const home = this._homePower(v);
 
     const thr = this._thr();
@@ -1917,8 +2077,8 @@ class EnergyFlowPriceCard extends LitElement {
     const act = (val) => val !== null && Math.abs(val) > thr;
 
     const solarHasEnt = !!c.solar_power;
-    const gridHasEnt = !!c.grid_power;
-    const battHasEnt = !!(c.battery_charge_power || c.battery_discharge_power);
+    const gridHasEnt = this._src("grid").entities.length > 0;
+    const battHasEnt = this._src("battery").entities.length > 0;
 
     const GREY = "#6b7280";
     const solarCol = solarHasEnt ? c.color_solar : GREY;
@@ -2093,12 +2253,27 @@ class EnergyFlowPriceCard extends LitElement {
     const bases = Object.fromEntries(wireKeys.map((k) => [k, baseWire(k, wirePts[k])]));
 
     // Today's kWh: one line per direction, with a "into the house" / "out of the house" icon.
-    const dayIn = (x) => (daily && x != null
-      ? html`<span class="day in" title=${this._t("day_in")}><ha-icon icon="mdi:home-import-outline"></ha-icon>${fmtKWh(x)} kWh</span>` : nothing);
-    const dayOut = (x) => (daily && x != null
-      ? html`<span class="day out" title=${this._t("day_out")}><ha-icon icon="mdi:home-export-outline"></ha-icon>${fmtKWh(x)} kWh</span>` : nothing);
+    // Each node gets its own symbol with a direction: a dedicated MDI icon where one exists
+    // (grid, battery), otherwise the node's icon with a small arrow badge
+    // (badge ↗ = the node delivers energy, ↙ = the node takes energy).
+    const dIcon = (base, badge) => badge
+      ? html`<span class="dic"><ha-icon icon="${base}"></ha-icon><ha-icon class="badge" icon="${badge}"></ha-icon></span>`
+      : html`<span class="dic"><ha-icon icon="${base}"></ha-icon></span>`;
+    const OUT_OF_NODE = "mdi:arrow-top-right-thick", INTO_NODE = "mdi:arrow-bottom-left-thick";
+    const DAY_ICONS = {
+      grid: { in: ["mdi:transmission-tower-import"], out: ["mdi:transmission-tower-export"] },
+      battery: { in: ["mdi:battery-arrow-down"], out: ["mdi:battery-arrow-up"] },
+      solar: { in: ["mdi:solar-power-variant", OUT_OF_NODE] },
+    };
+    const dayLine = (k, dir, x, icon) => {
+      if (!daily || x == null) return nothing;
+      const ic = icon || DAY_ICONS[k]?.[dir] || [dir === "in" ? "mdi:home-import-outline" : "mdi:home-export-outline"];
+      return html`<span class="day ${dir}" title=${this._t(dir === "in" ? "day_in" : "day_out")}>${dIcon(ic[0], ic[1])}${fmtKWh(x)} kWh</span>`;
+    };
+    const dayIn = (x, k) => dayLine(k, "in", x);
+    const dayOut = (x, k, icon) => dayLine(k, "out", x, icon ? [icon, INTO_NODE] : null);
     const homeDayLine = daily && daily.home != null
-      ? html`<span class="day home" title=${this._t("day_home")}><ha-icon icon="mdi:home-lightning-bolt-outline"></ha-icon>${fmtKWh(daily.home)} kWh</span>` : nothing;
+      ? html`<span class="day home" title=${this._t("day_home")}><span class="dic"><ha-icon icon="mdi:home-lightning-bolt-outline"></ha-icon></span>${fmtKWh(daily.home)} kWh</span>` : nothing;
 
     const node = (k, muted, inner, extraCls = "") => {
       const ev = this._nodeEvents(k);
@@ -2136,11 +2311,11 @@ class EnergyFlowPriceCard extends LitElement {
 
         ${node("solar", !solarHasEnt, html`
           ${squareIcon("solar", "mdi:solar-power-variant", solarCol)}
-          <div class="txt"><span class="lbl">${this._t("solar")}</span><span class="val" style="color:${solarCol}">${fmtPower(v.solar)}</span>${dayIn(daily?.solar)}</div>`)}
+          <div class="txt"><span class="lbl">${this._t("solar")}</span><span class="val" style="color:${solarCol}">${fmtPower(v.solar)}</span>${dayIn(daily?.solar, "solar")}</div>`)}
 
         ${node("grid", !gridHasEnt, html`
           ${squareIcon("grid", "mdi:transmission-tower", gridCol)}
-          <div class="txt"><span class="lbl">${this._t("grid")}</span><span class="val" style="color:${gridCol}">${fmtPower(v.grid)}</span>${gridLabel ? html`<span class="sub" style="color:${gridCol}">${gridLabel}</span>` : nothing}${dayIn(daily?.gridIn)}${dayOut(daily?.gridOut)}</div>`)}
+          <div class="txt"><span class="lbl">${this._t("grid")}</span><span class="val" style="color:${gridCol}">${fmtPower(v.grid)}</span>${gridLabel ? html`<span class="sub" style="color:${gridCol}">${gridLabel}</span>` : nothing}${dayIn(daily?.gridIn, "grid")}${dayOut(daily?.gridOut, "grid")}</div>`)}
 
         ${node("battery", !battHasEnt, html`
           ${c.battery_ring !== false
@@ -2152,7 +2327,7 @@ class EnergyFlowPriceCard extends LitElement {
                 <div class="ic round" style="color:${battCol}"><ha-icon icon="mdi:battery-charging"></ha-icon></div>
               </div>`
             : squareIcon("battery", "mdi:battery-charging", battCol)}
-          <div class="txt"><span class="lbl">${this._t("battery")}${battHasEnt && v.soc !== null ? html` · <b style="color:${battCol}">${Math.round(v.soc)}%</b>` : nothing}</span><span class="val" style="color:${battCol}">${fmtPower(battValue)}</span>${battLabel ? html`<span class="sub" style="color:${battCol}">${battLabel}</span>` : nothing}${dayIn(daily?.battOut)}${dayOut(daily?.battIn)}</div>`)}
+          <div class="txt"><span class="lbl">${this._t("battery")}${battHasEnt && v.soc !== null ? html` · <b style="color:${battCol}">${Math.round(v.soc)}%</b>` : nothing}</span><span class="val" style="color:${battCol}">${fmtPower(battValue)}</span>${battLabel ? html`<span class="sub" style="color:${battCol}">${battLabel}</span>` : nothing}${dayIn(daily?.battOut, "battery")}${dayOut(daily?.battIn, "battery")}</div>`)}
 
         ${rowMode
           ? this._renderDeviceHub(allDevs, c, devHasEnt, node, daily, dayOut)
@@ -2191,7 +2366,7 @@ class EnergyFlowPriceCard extends LitElement {
         <span class="lbl">${this._t("devices")}</span>
         <span class="val" style="color:${cc}">${fmtPower(total)}</span>
         ${activeCount ? html`<span class="sub" style="color:${cc}">${activeCount} ${this._t("active")}</span>` : nothing}
-        ${dayOut(dayTotal)}
+        ${dayOut(dayTotal, "devices", "mdi:power-socket-de")}
       </div>`, "car");
   }
 
@@ -2216,7 +2391,7 @@ class EnergyFlowPriceCard extends LitElement {
       <span class="lbl">${d.name}${d.soc != null ? html` · <b style="color:${cc}">${Math.round(d.soc)}%</b>` : nothing}</span>
       <span class="val" style="color:${cc}">${fmtPower(d.power)}</span>
       ${d.active ? html`<span class="sub" style="color:${cc}">${d.isCar ? this._t("charging") : this._t("active")}</span>` : nothing}
-      ${dayOut(d.day)}
+      ${dayOut(d.day, "devices", d.icon)}
     </div>`;
   }
 
@@ -2230,7 +2405,7 @@ class EnergyFlowPriceCard extends LitElement {
         <span class="lbl">${d.name}${d.soc != null ? html` · <b style="color:${cc}">${Math.round(d.soc)}%</b>` : nothing}</span>
         <span class="val" style="color:${cc}">${fmtPower(d.power)}</span>
         ${d.active ? html`<span class="sub" style="color:${cc}">${d.isCar ? this._t("charging") : this._t("active")}</span>` : nothing}
-        ${dayOut(d.day)}`;
+        ${dayOut(d.day, "devices", d.icon)}`;
     };
     const squareIcon = (icon, cc) => html`
       <div class="ic" data-anc="devices" style="color:${cc};border-color:${cc}66;background:${cc}22">
@@ -2372,12 +2547,12 @@ class EnergyFlowPriceCard extends LitElement {
     return [
       { id: "price", label: this._t("tab_price"), show: !!c.price_entity || !!c.price_use_tibber_service },
       { id: "solar", label: this._t("tab_solar"), show: !!c.solar_power },
-      { id: "grid", label: this._t("tab_grid"), show: !!c.grid_power },
+      { id: "grid", label: this._t("tab_grid"), show: this._src("grid").entities.length > 0 },
       { id: "accu", label: this._t("tab_battery"), show: !!c.battery_soc },
       {
         id: "usage",
         label: this._t("tab_usage"),
-        show: !!(c.solar_power || c.battery_charge_power || c.battery_discharge_power || c.grid_power),
+        show: !!(c.solar_power || this._src("grid").entities.length || this._src("battery").entities.length),
       },
       { id: "devices", label: this._t("tab_devices"), show: this._devices().some((d) => d.power) },
     ].filter((t) => t.show);
@@ -2530,9 +2705,9 @@ class EnergyFlowPriceCard extends LitElement {
       series = [{ name: T("solar"), color: c.color_solar, entity: c.solar_power, area: true, live: live(c.solar_power) }];
       opts = { title: T("tab_solar") };
     } else if (mode === "grid") {
-      entities = [c.grid_power];
+      entities = this._src("grid").entities;
       series = [{
-        name: T("grid"), color: c.color_grid, entity: c.grid_power, live: live(c.grid_power), split: true,
+        name: T("grid"), color: c.color_grid, src: "grid", live: this._srcValue("grid"), split: true,
         label: (v) => (v < 0 ? T("grid_export") : T("grid_import")),
       }];
       opts = { title: T("grid_title"), signed: true, splitColors: { pos: c.color_grid, neg: c.color_grid_export || "#22c55e" } };
@@ -2541,7 +2716,7 @@ class EnergyFlowPriceCard extends LitElement {
       series = [{ name: T("battery"), color: c.color_battery, entity: c.battery_soc, area: true, live: num(this.hass, c.battery_soc) }];
       opts = { title: T("battery_soc_title"), fixedMax: 100, unit: "%" };
     } else if (mode === "usage") {
-      entities = [c.solar_power, c.battery_charge_power, c.battery_discharge_power, c.grid_power];
+      entities = [c.solar_power, ...this._src("battery").entities, ...this._src("grid").entities];
       opts = { title: T("usage_title"), signed: true, merged: true };
     } else if (mode === "devices") {
       const devs = this._devices().filter((d) => d.power);
@@ -2559,27 +2734,18 @@ class EnergyFlowPriceCard extends LitElement {
     if (mode === "usage") {
       // solar, battery (discharge +, charge −), grid (+ import, − export) and the computed home use
       const sol = byEntity[c.solar_power] || [];
-      const dis = byEntity[c.battery_discharge_power] || [];
-      const chg = byEntity[c.battery_charge_power] || [];
-      const grd = byEntity[c.grid_power] || [];
-      const battPts = (c.battery_discharge_power || c.battery_charge_power) ? mergeSeries([dis, chg], ([a, b]) => a - b) : [];
-      const homePts = mergeSeries([sol, grd, dis, chg], ([s, g, d, ch]) => s + g + d - ch);
-      const lv = {
-        solar: live(c.solar_power), grid: live(c.grid_power),
-        dis: live(c.battery_discharge_power), chg: live(c.battery_charge_power),
-      };
-      const vv = {
-        solar: pw(this.hass, c.solar_power), grid: pw(this.hass, c.grid_power),
-        charge: pw(this.hass, c.battery_charge_power), discharge: pw(this.hass, c.battery_discharge_power),
-      };
+      const grd = this._srcSeries("grid", byEntity);
+      const battPts = this._srcSeries("battery", byEntity);
+      const homePts = mergeSeries([sol, grd, battPts], ([s, g, b]) => s + g + b);
+      const vv = this._liveV();
       series = [
-        c.solar_power ? { name: T("solar"), color: c.color_solar, points: sol, live: lv.solar } : null,
-        battPts.length ? { name: T("battery"), color: c.color_battery, points: battPts, live: (lv.dis ?? 0) - (lv.chg ?? 0) } : null,
-        c.grid_power ? { name: T("grid"), color: c.color_grid, points: grd, live: lv.grid } : null,
+        c.solar_power ? { name: T("solar"), color: c.color_solar, points: sol, live: vv.solar } : null,
+        battPts.length ? { name: T("battery"), color: c.color_battery, points: battPts, live: this._srcValue("battery") } : null,
+        grd.length ? { name: T("grid"), color: c.color_grid, points: grd, live: vv.grid } : null,
         homePts.length ? { name: T("home"), color: c.color_home, points: homePts, live: this._homePower(vv), area: true } : null,
       ].filter(Boolean);
     } else {
-      series = series.map((s) => ({ ...s, points: byEntity[s.entity] || [] }));
+      series = series.map((s) => ({ ...s, points: s.src ? this._srcSeries(s.src, byEntity) : (byEntity[s.entity] || []) }));
     }
 
     return this._lineChart({ ...opts, series, spec, loading: !data.loaded, error: data.error });
@@ -3073,7 +3239,9 @@ class EnergyFlowPriceCard extends LitElement {
       .node .ic, .node .socwrap { transition: transform .15s ease; }
       .node:active .ic, .node:active .socwrap { transform: scale(.94); }
       .day { display: inline-flex; align-items: center; gap: 3px; font-size: 12.5px; font-weight: 600; white-space: nowrap; font-variant-numeric: tabular-nums; margin-top: 2px; line-height: 1.15; }
-      .day ha-icon { --mdc-icon-size: 16px; }
+      .day .dic { position: relative; display: inline-flex; width: 18px; height: 18px; align-items: center; justify-content: center; }
+      .day .dic ha-icon { --mdc-icon-size: 17px; }
+      .day .dic ha-icon.badge { position: absolute; right: -5px; bottom: -4px; --mdc-icon-size: 11px; background: var(--card-background-color, #1c1c1c); border-radius: 50%; }
       .day.in { color: var(--efp-day-in); }
       .day.out { color: var(--efp-day-out); }
       .day.home { color: var(--efp-day-home); }
@@ -3189,7 +3357,7 @@ class EnergyFlowPriceCard extends LitElement {
 
 customElements.define("energy-flow-price-card", EnergyFlowPriceCard);
 
-console.info("%c energy-flow-price-card %c v1.14.0-fork ", "background:#7dd3fc;color:#0a1420;font-weight:700", "background:#333;color:#fff");
+console.info("%c energy-flow-price-card %c v1.15.0-fork ", "background:#7dd3fc;color:#0a1420;font-weight:700", "background:#333;color:#fff");
 
 window.customCards = window.customCards || [];
 window.customCards.push({

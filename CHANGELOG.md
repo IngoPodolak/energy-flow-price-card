@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.15.0-fork
+
+- Netz und Akku: wahlweise **eine Entität mit Vorzeichen** oder **zwei getrennte Entitäten** – für die aktuelle Leistung und für den Tageswert, jeweils mit „Vorzeichen umkehren“.
+- Tageswerte mit eigenen Richtungs-Symbolen je Knoten: Netz (Mast mit Bezug/Einspeisung), Akku (Akku mit Pfeil runter/hoch), Solar (Panel mit Pfeil), Geräte (Gerätesymbol mit Pfeil).
+
 ## v1.14.0-fork
 
 - Neues Eingabefeld „Linie ausblenden unter … W“ (`flow_min_power`, Standard 5 W).
