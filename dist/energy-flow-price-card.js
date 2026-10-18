@@ -3015,5 +3015,5 @@ window.customCards.push({
   name: "Energy Flow & Price Card",
   description: "Energy flow (grid/solar/battery/home/devices) with daily kWh, history charts and dynamic electricity prices (fork).",
   preview: true,
-  documentationURL: "https://github.com/dennisbest85/energy-flow-price-card",
+  documentationURL: "https://github.com/IngoPodolak/energy-flow-price-card",
 });

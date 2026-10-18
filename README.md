@@ -70,7 +70,7 @@ Everything is configurable through the graphical editor in the HA GUI: pick your
 ## Installation via HACS (custom repository)
 
 1. HACS -> top-right three dots -> **Custom repositories**.
-2. Paste your repo URL (`https://github.com/DEIN-NAME/energy-flow-price-card`), type **Dashboard** (Lovelace), and add it.
+2. Paste your repo URL (`https://github.com/IngoPodolak/energy-flow-price-card`), type **Dashboard** (Lovelace), and add it.
 3. Search for **Energy Flow & Price Card** in HACS and install.
 4. Refresh your browser (or clear the cache).
 
@@ -166,7 +166,7 @@ Alles is instelbaar via de grafische editor in de HA GUI: kies je entiteiten, ze
 ## Installatie via HACS (custom repository)
 
 1. HACS -> rechtsboven de drie puntjes -> **Custom repositories**.
-2. Plak de URL van je repo (`https://github.com/DEIN-NAME/energy-flow-price-card`), type **Dashboard** (Lovelace), en voeg toe.
+2. Plak de URL van je repo (`https://github.com/IngoPodolak/energy-flow-price-card`), type **Dashboard** (Lovelace), en voeg toe.
 3. Zoek **Energy Flow & Price Card** in HACS en installeer.
 4. Ververs je browser (of leeg de cache).
 
