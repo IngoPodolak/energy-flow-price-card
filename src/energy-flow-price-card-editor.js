@@ -352,6 +352,9 @@ class EnergyFlowPriceCardEditor extends LitElement {
           <ha-formfield label=${T("ed_show_daily")}>
             <ha-switch .checked=${this._config.show_daily_energy !== false} @change=${(e) => this._toggle("show_daily_energy", e)}></ha-switch>
           </ha-formfield>
+          <ha-formfield label=${T("ed_home_costs")}>
+            <ha-switch .checked=${this._config.home_show_costs !== false} @change=${(e) => this._toggle("home_show_costs", e)}></ha-switch>
+          </ha-formfield>
           ${this._config.show_daily_energy !== false ? html`
             <div class="note">${T("ed_daily_note")}</div>
             ${this._entity("energy_solar", T("ed_energy_solar"), ["sensor"])}

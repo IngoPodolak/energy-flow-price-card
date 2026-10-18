@@ -224,6 +224,8 @@ const TRANSLATIONS = {
     today: "Today",
     yesterday: "Yesterday",
     ed_price_costs: "Show electricity costs (grid import) – today, plus yesterday for windows over 24 h",
+    cost_today: "Electricity costs today (grid import)",
+    ed_home_costs: "Show today's electricity costs under \"Home\"",
   },
   nl: {
     solar: "Solar",
@@ -544,6 +546,8 @@ const TRANSLATIONS = {
     today: "Heute",
     yesterday: "Gestern",
     ed_price_costs: "Stromkosten (Netzbezug) anzeigen – heute, bei mehr als 24 h auch gestern",
+    cost_today: "Stromkosten heute (Netzbezug)",
+    ed_home_costs: "Heutige Stromkosten unter „Haus“ anzeigen",
   },
 };
 

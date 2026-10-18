@@ -145,7 +145,8 @@ const DEFAULTS = {
   energy_battery_mode: "dual",
   solar_forecast: true,     // solar forecast from the HA energy dashboard (Forecast.Solar, Solcast …), if configured there
   solar_forecast_node: true, // also show today's forecast kWh under the solar node
-  price_show_costs: true,   // price chart: costs of the grid import today (and yesterday for windows > 24 h)
+  price_show_costs: true,
+  home_show_costs: true,    // today's electricity costs under the house   // price chart: costs of the grid import today (and yesterday for windows > 24 h)
   price_axis_auto: true,    // price chart: axis starts just below the lowest price (negative prices supported)
   price_show_minmax: false, // mark each day's highest / lowest price in the price chart
   // "Usage" tab: last-hour power (W) breakdown by source (solar/battery/grid). Reuses the
@@ -447,6 +448,8 @@ const TRANSLATIONS = {
     today: "Today",
     yesterday: "Yesterday",
     ed_price_costs: "Show electricity costs (grid import) – today, plus yesterday for windows over 24 h",
+    cost_today: "Electricity costs today (grid import)",
+    ed_home_costs: "Show today's electricity costs under \"Home\"",
   },
   nl: {
     solar: "Solar",
@@ -767,6 +770,8 @@ const TRANSLATIONS = {
     today: "Heute",
     yesterday: "Gestern",
     ed_price_costs: "Stromkosten (Netzbezug) anzeigen – heute, bei mehr als 24 h auch gestern",
+    cost_today: "Stromkosten heute (Netzbezug)",
+    ed_home_costs: "Heutige Stromkosten unter „Haus“ anzeigen",
   },
 };
 
@@ -1141,6 +1146,9 @@ class EnergyFlowPriceCardEditor extends LitElement {
           <div class="head">${T("ed_daily")}</div>
           <ha-formfield label=${T("ed_show_daily")}>
             <ha-switch .checked=${this._config.show_daily_energy !== false} @change=${(e) => this._toggle("show_daily_energy", e)}></ha-switch>
+          </ha-formfield>
+          <ha-formfield label=${T("ed_home_costs")}>
+            <ha-switch .checked=${this._config.home_show_costs !== false} @change=${(e) => this._toggle("home_show_costs", e)}></ha-switch>
           </ha-formfield>
           ${this._config.show_daily_energy !== false ? html`
             <div class="note">${T("ed_daily_note")}</div>
@@ -2483,6 +2491,16 @@ class EnergyFlowPriceCard extends LitElement {
     const fcToday = c.solar_forecast !== false && c.solar_forecast_node !== false ? this._forecastToday() : null;
     const fcLine = fcToday != null
       ? html`<span class="day fc" title=${this._t("forecast_today")}><span class="dic"><ha-icon icon="mdi:weather-partly-cloudy"></ha-icon></span>${fmtKWh(fcToday)} kWh</span>` : nothing;
+    // today's electricity costs (grid import × price) under the house, same calculation as in the price chart
+    let homeCostLine = nothing;
+    if (c.home_show_costs !== false && c.price_show_costs !== false && this._src("grid").entities.length && (c.price_entity || c.price_use_tibber_service)) {
+      this._ensureCostData();
+      if (c.price_use_tibber_service) this._ensureTibberPrices();
+      const r = this._costFor(startOfToday(), this._priceData().points);
+      if (r && r.eur != null) {
+        homeCostLine = html`<span class="day cost" title=${this._t("cost_today")}><span class="dic"><ha-icon icon="mdi:cash"></ha-icon></span>${r.eur.toFixed(2).replace(".", ",")} €</span>`;
+      }
+    }
     const homeDayLine = daily && daily.home != null
       ? html`<span class="day home" title=${this._t("day_home")}><span class="dic"><ha-icon icon="mdi:home-lightning-bolt-outline"></ha-icon></span>${fmtKWh(daily.home)} kWh</span>` : nothing;
 
@@ -2572,6 +2590,7 @@ class EnergyFlowPriceCard extends LitElement {
           <span class="lbl">${this._t("home")}</span>
           <span class="val" style="color:${c.color_home}">${fmtPower(home)}</span>
           ${homeDayLine}
+          ${homeCostLine}
         </div>
       </div>
       ${rowDevs.length ? html`<div class="devrow">${rowDevs.map((d) => this._renderDeviceItem(d, c, dayOut))}</div>` : nothing}
@@ -3697,6 +3716,7 @@ class EnergyFlowPriceCard extends LitElement {
       .day.in { color: var(--efp-day-in); }
       .day.out { color: var(--efp-day-out); }
       .day.home { color: var(--efp-day-home); }
+      .day.cost { color: var(--success-color, #34d399); }
       .day.fc { color: var(--secondary-text-color); font-weight: 500; }
       .usage-legend-item i.dash { width: 12px; height: 0; border-radius: 0; border-top: 2px dashed; background: none; }
       .node.bl { left: 6px; bottom: 8px; }
@@ -3819,8 +3839,8 @@ class EnergyFlowPriceCard extends LitElement {
 
 customElements.define("energy-flow-price-card", EnergyFlowPriceCard);
 
-window.__EFPC_VERSION = "1.21.0-fork";
-console.info("%c energy-flow-price-card %c v1.21.0-fork ", "background:#7dd3fc;color:#0a1420;font-weight:700", "background:#333;color:#fff");
+window.__EFPC_VERSION = "1.22.0-fork";
+console.info("%c energy-flow-price-card %c v1.22.0-fork ", "background:#7dd3fc;color:#0a1420;font-weight:700", "background:#333;color:#fff");
 
 window.customCards = window.customCards || [];
 window.customCards.push({

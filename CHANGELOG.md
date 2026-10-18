@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.22.0-fork
+
+- Heutige Stromkosten (Netzbezug × Preis) unter „Haus“, abschaltbar (`home_show_costs`).
+
 ## v1.21.0-fork
 
 - Preisdiagramm: Stromkosten des Netzbezugs neben dem „Jetzt“-Preis – heute, bei mehr als 24 h zusätzlich gestern (`price_show_costs`). Berechnet je 5 Minuten aus Netzbezug × gültigem Preis; Preise von gestern aus dem Verlauf der Preis-Entität.

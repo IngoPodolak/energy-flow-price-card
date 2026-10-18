@@ -1050,6 +1050,16 @@ class EnergyFlowPriceCard extends LitElement {
     const fcToday = c.solar_forecast !== false && c.solar_forecast_node !== false ? this._forecastToday() : null;
     const fcLine = fcToday != null
       ? html`<span class="day fc" title=${this._t("forecast_today")}><span class="dic"><ha-icon icon="mdi:weather-partly-cloudy"></ha-icon></span>${fmtKWh(fcToday)} kWh</span>` : nothing;
+    // today's electricity costs (grid import × price) under the house, same calculation as in the price chart
+    let homeCostLine = nothing;
+    if (c.home_show_costs !== false && c.price_show_costs !== false && this._src("grid").entities.length && (c.price_entity || c.price_use_tibber_service)) {
+      this._ensureCostData();
+      if (c.price_use_tibber_service) this._ensureTibberPrices();
+      const r = this._costFor(startOfToday(), this._priceData().points);
+      if (r && r.eur != null) {
+        homeCostLine = html`<span class="day cost" title=${this._t("cost_today")}><span class="dic"><ha-icon icon="mdi:cash"></ha-icon></span>${r.eur.toFixed(2).replace(".", ",")} €</span>`;
+      }
+    }
     const homeDayLine = daily && daily.home != null
       ? html`<span class="day home" title=${this._t("day_home")}><span class="dic"><ha-icon icon="mdi:home-lightning-bolt-outline"></ha-icon></span>${fmtKWh(daily.home)} kWh</span>` : nothing;
 
@@ -1139,6 +1149,7 @@ class EnergyFlowPriceCard extends LitElement {
           <span class="lbl">${this._t("home")}</span>
           <span class="val" style="color:${c.color_home}">${fmtPower(home)}</span>
           ${homeDayLine}
+          ${homeCostLine}
         </div>
       </div>
       ${rowDevs.length ? html`<div class="devrow">${rowDevs.map((d) => this._renderDeviceItem(d, c, dayOut))}</div>` : nothing}
@@ -2264,6 +2275,7 @@ class EnergyFlowPriceCard extends LitElement {
       .day.in { color: var(--efp-day-in); }
       .day.out { color: var(--efp-day-out); }
       .day.home { color: var(--efp-day-home); }
+      .day.cost { color: var(--success-color, #34d399); }
       .day.fc { color: var(--secondary-text-color); font-weight: 500; }
       .usage-legend-item i.dash { width: 12px; height: 0; border-radius: 0; border-top: 2px dashed; background: none; }
       .node.bl { left: 6px; bottom: 8px; }
@@ -2386,8 +2398,8 @@ class EnergyFlowPriceCard extends LitElement {
 
 customElements.define("energy-flow-price-card", EnergyFlowPriceCard);
 
-window.__EFPC_VERSION = "1.21.0-fork";
-console.info("%c energy-flow-price-card %c v1.21.0-fork ", "background:#7dd3fc;color:#0a1420;font-weight:700", "background:#333;color:#fff");
+window.__EFPC_VERSION = "1.22.0-fork";
+console.info("%c energy-flow-price-card %c v1.22.0-fork ", "background:#7dd3fc;color:#0a1420;font-weight:700", "background:#333;color:#fff");
 
 window.customCards = window.customCards || [];
 window.customCards.push({
