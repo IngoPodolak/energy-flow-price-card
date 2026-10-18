@@ -324,6 +324,18 @@ class EnergyFlowPriceCardEditor extends LitElement {
         </div>
 
         <div class="section">
+          <div class="head">${T("ed_forecast")}</div>
+          <ha-formfield label=${T("ed_forecast_show")}>
+            <ha-switch .checked=${this._config.solar_forecast !== false} @change=${(e) => this._toggle("solar_forecast", e)}></ha-switch>
+          </ha-formfield>
+          ${this._config.solar_forecast !== false ? html`
+            <ha-formfield label=${T("ed_forecast_node")}>
+              <ha-switch .checked=${this._config.solar_forecast_node !== false} @change=${(e) => this._toggle("solar_forecast_node", e)}></ha-switch>
+            </ha-formfield>` : nothing}
+          <div class="note">${T("ed_forecast_note")}</div>
+        </div>
+
+        <div class="section">
           <div class="head">${T("ed_cars")}</div>
           <div class="note">${T("ed_car_note")}</div>
           <div class="addrow">

@@ -143,6 +143,8 @@ const DEFAULTS = {
   battery_invert: false,    // single: true = positive means charging
   energy_grid_mode: "dual", // daily kWh: "dual" (energy_grid_import + energy_grid_export) | "single" (energy_grid, signed)
   energy_battery_mode: "dual",
+  solar_forecast: true,     // solar forecast from the HA energy dashboard (Forecast.Solar, Solcast …), if configured there
+  solar_forecast_node: true, // also show today's forecast kWh under the solar node
   price_show_minmax: false, // mark each day's highest / lowest price in the price chart
   // "Usage" tab: last-hour power (W) breakdown by source (solar/battery/grid). Reuses the
   // solar_power/battery_charge_power/battery_discharge_power/grid_power entities already
@@ -432,6 +434,12 @@ const TRANSLATIONS = {
     ed_dev_show_always: "Always show",
     ed_dev_show_active: "Only when active",
     ed_dev_min_power: "Off below (empty = global)",
+    forecast: "Forecast",
+    forecast_today: "Forecast today",
+    ed_forecast: "Solar forecast",
+    ed_forecast_show: "Show forecast in the solar chart (dashed)",
+    ed_forecast_node: "Show today's forecast (kWh) under the solar icon",
+    ed_forecast_note: "Uses the same forecast as the Home Assistant energy dashboard (e.g. Forecast.Solar or Solcast). It must be configured there for your solar panels.",
   },
   nl: {
     solar: "Solar",
@@ -741,6 +749,12 @@ const TRANSLATIONS = {
     ed_dev_show_always: "Immer anzeigen",
     ed_dev_show_active: "Nur wenn aktiv",
     ed_dev_min_power: "Aus unter (leer = global)",
+    forecast: "Prognose",
+    forecast_today: "Prognose heute",
+    ed_forecast: "Solarprognose",
+    ed_forecast_show: "Prognose im Solar-Diagramm anzeigen (gestrichelt)",
+    ed_forecast_node: "Prognose heute (kWh) unter dem Solar-Symbol anzeigen",
+    ed_forecast_note: "Nutzt dieselbe Prognose wie das Energie-Dashboard von Home Assistant (z. B. Forecast.Solar oder Solcast). Sie muss dort unter Einstellungen → Dashboards → Energie bei der Solaranlage eingetragen sein.",
   },
 };
 
@@ -1085,6 +1099,18 @@ class EnergyFlowPriceCardEditor extends LitElement {
             ${this._entity("energy_solar", T("ed_energy_solar"), ["sensor"])}
             ${this._srcBlock("grid", true)}
             ${this._srcBlock("battery", true)}` : nothing}
+        </div>
+
+        <div class="section">
+          <div class="head">${T("ed_forecast")}</div>
+          <ha-formfield label=${T("ed_forecast_show")}>
+            <ha-switch .checked=${this._config.solar_forecast !== false} @change=${(e) => this._toggle("solar_forecast", e)}></ha-switch>
+          </ha-formfield>
+          ${this._config.solar_forecast !== false ? html`
+            <ha-formfield label=${T("ed_forecast_node")}>
+              <ha-switch .checked=${this._config.solar_forecast_node !== false} @change=${(e) => this._toggle("solar_forecast_node", e)}></ha-switch>
+            </ha-formfield>` : nothing}
+          <div class="note">${T("ed_forecast_note")}</div>
         </div>
 
         <div class="section">
@@ -1544,7 +1570,7 @@ function mergeSeries(arrs, fn) {
 }
 
 // X-axis labels for an arbitrary time span, aligned to round local times.
-function timeLabels(startMs, endMs, lang) {
+function timeLabels(startMs, endMs, lang, endIsNow = true) {
   const span = Math.max(1, endMs - startMs);
   const MIN = 60000;
   const steps = [5, 10, 15, 30, 60, 120, 180, 240, 360, 720, 1440, 2880].map((m) => m * MIN);
@@ -1556,7 +1582,7 @@ function timeLabels(startMs, endMs, lang) {
   for (let t = base + Math.ceil((startMs - base) / step) * step; t <= endMs; t += step) {
     const d = new Date(t);
     const frac = (t - startMs) / span;
-    if (frac > 0.86) break;
+    if (endIsNow && frac > 0.86) break;
     let text;
     if (step >= 1440 * MIN || (span > 86400000 && d.getHours() === 0 && d.getMinutes() === 0)) {
       text = d.toLocaleDateString(lang, { weekday: "short" });
@@ -1565,8 +1591,10 @@ function timeLabels(startMs, endMs, lang) {
     }
     out.push({ frac, text });
   }
-  const now = new Date(endMs);
-  out.push({ frac: 1, text: now.getHours() + ":" + String(now.getMinutes()).padStart(2, "0") });
+  if (endIsNow) {
+    const now = new Date(endMs);
+    out.push({ frac: 1, text: now.getHours() + ":" + String(now.getMinutes()).padStart(2, "0") });
+  }
   return out;
 }
 
@@ -2366,6 +2394,9 @@ class EnergyFlowPriceCard extends LitElement {
     };
     const dayIn = (x, k) => dayLine(k, "in", x);
     const dayOut = (x, k, icon) => dayLine(k, "out", x, icon ? [icon, INTO_NODE] : null);
+    const fcToday = c.solar_forecast !== false && c.solar_forecast_node !== false ? this._forecastToday() : null;
+    const fcLine = fcToday != null
+      ? html`<span class="day fc" title=${this._t("forecast_today")}><span class="dic"><ha-icon icon="mdi:weather-partly-cloudy"></ha-icon></span>${fmtKWh(fcToday)} kWh</span>` : nothing;
     const homeDayLine = daily && daily.home != null
       ? html`<span class="day home" title=${this._t("day_home")}><span class="dic"><ha-icon icon="mdi:home-lightning-bolt-outline"></ha-icon></span>${fmtKWh(daily.home)} kWh</span>` : nothing;
 
@@ -2422,7 +2453,7 @@ class EnergyFlowPriceCard extends LitElement {
 
         ${node("solar", !solarHasEnt, html`
           ${squareIcon("solar", "mdi:solar-power-variant", solarCol)}
-          <div class="txt"><span class="lbl">${this._t("solar")}</span><span class="val" style="color:${solarCol}">${fmtPower(v.solar)}</span>${dayIn(daily?.solar, "solar")}</div>`)}
+          <div class="txt"><span class="lbl">${this._t("solar")}</span><span class="val" style="color:${solarCol}">${fmtPower(v.solar)}</span>${dayIn(daily?.solar, "solar")}${fcLine}</div>`)}
 
         ${node("grid", !gridHasEnt, html`
           ${squareIcon("grid", "mdi:transmission-tower", gridCol)}
@@ -2727,12 +2758,64 @@ class EnergyFlowPriceCard extends LitElement {
     }, secs * 1000);
   }
 
+  // Solar forecast exactly like the HA energy dashboard: the forecast integrations
+  // (Forecast.Solar, Solcast, …) configured there, summed, via energy/solar_forecast.
+  async _ensureForecast() {
+    if (this._config.solar_forecast === false || !this.hass?.callWS) return;
+    const f = this._fc;
+    if (f && (f.busy || Date.now() - f.fetched < 900000)) return;
+    this._fc = { ...(f || { points: [] }), busy: true, fetched: Date.now() };
+    let ids = null;
+    try {
+      const prefs = await this.hass.callWS({ type: "energy/get_prefs" });
+      ids = (prefs?.energy_sources || []).filter((x) => x.type === "solar").flatMap((x) => x.config_entry_solar_forecast || []);
+    } catch (e) { /* no energy prefs -> use every forecast */ }
+    let data;
+    try {
+      data = (await this.hass.callWS({ type: "energy/solar_forecast" })) || {};
+    } catch (e) {
+      this._fc = { busy: false, fetched: Date.now(), points: [], error: true };
+      this.requestUpdate();
+      return;
+    }
+    const use = ids && ids.length ? ids : Object.keys(data);
+    const sum = new Map();
+    for (const id of use) {
+      for (const [k, wh] of Object.entries(data[id]?.wh_hours || {})) {
+        const t = Date.parse(k);
+        if (!isNaN(t)) sum.set(t, (sum.get(t) || 0) + (+wh || 0));
+      }
+    }
+    const ts = [...sum.keys()].sort((a, b) => a - b);
+    let step = 3600000;
+    for (let i = 1; i < ts.length; i++) { const gap = ts[i] - ts[i - 1]; if (gap >= 60000 && gap < step) step = gap; }
+    // Wh per slot -> average power (W) drawn at the middle of the slot
+    const points = ts.map((t) => ({ t, wh: sum.get(t), v: sum.get(t) / (step / 3600000) }));
+    this._fc = { busy: false, fetched: Date.now(), points, step };
+    this.requestUpdate();
+  }
+
+  _forecastPoints() {
+    if (this._config.solar_forecast === false) return null;
+    this._ensureForecast();
+    const pts = this._fc?.points;
+    return pts && pts.length ? pts : null;
+  }
+
+  // forecast kWh for today (whole day) or null when no forecast is configured
+  _forecastToday() {
+    const pts = this._forecastPoints();
+    if (!pts) return null;
+    const a = startOfToday(), b = a + 86400000;
+    return pts.filter((p) => p.t >= a && p.t < b).reduce((x, p) => x + p.wh, 0) / 1000;
+  }
+
   _rangeSpec() {
     const id = this._histRange ?? this._config.history_range ?? "today";
     const r = HISTORY_RANGES.find((x) => x.id === id) || HISTORY_RANGES.find((x) => x.id === "today");
     const end = Date.now();
     const start = r.hours == null ? startOfToday() : end - r.hours * 3600000;
-    return { id: r.id, start, end, hours: (end - start) / 3600000 };
+    return { id: r.id, start, end, now: end, hours: (end - start) / 3600000 };
   }
 
   // Load (and cache) history for a set of entities over the chosen span. Spans longer
@@ -2804,7 +2887,7 @@ class EnergyFlowPriceCard extends LitElement {
   }
 
   _historyChart(c, mode) {
-    const spec = this._rangeSpec();
+    let spec = this._rangeSpec();
     const T = (k) => this._t(k);
     const live = (e) => pw(this.hass, e);
     let series = [];
@@ -2815,6 +2898,18 @@ class EnergyFlowPriceCard extends LitElement {
       entities = [c.solar_power];
       series = [{ name: T("solar"), color: c.color_solar, entity: c.solar_power, area: true, live: live(c.solar_power) }];
       opts = { title: T("tab_solar") };
+      const fc = this._forecastPoints();
+      if (fc) {
+        // "today": like the energy dashboard, the axis runs to midnight so the rest of the day's forecast is visible
+        if (spec.id === "today") spec = { ...spec, end: spec.start + 86400000 };
+        const half = (this._fc.step || 3600000) / 2;
+        const total = this._forecastToday();
+        series.push({
+          name: T("forecast"), color: c.color_solar, forecast: true,
+          points: fc.map((p) => ({ t: p.t + half, v: p.v })).filter((p) => p.t >= spec.start - half * 2 && p.t <= spec.end + half * 2),
+          legendNow: total != null ? `${T("forecast_today")} ${fmtKWh(total)} kWh` : null,
+        });
+      }
     } else if (mode === "grid") {
       entities = this._src("grid").entities;
       series = [{
@@ -2856,7 +2951,7 @@ class EnergyFlowPriceCard extends LitElement {
         homePts.length ? { name: T("home"), color: c.color_home, points: homePts, live: this._homePower(vv), area: true } : null,
       ].filter(Boolean);
     } else {
-      series = series.map((s) => ({ ...s, points: s.src ? this._srcSeries(s.src, byEntity) : (byEntity[s.entity] || []) }));
+      series = series.map((s) => (s.forecast ? s : { ...s, points: s.src ? this._srcSeries(s.src, byEntity) : (byEntity[s.entity] || []) }));
     }
 
     return this._lineChart({ ...opts, series, spec, loading: !data.loaded, error: data.error, toggleKey: mode });
@@ -2869,12 +2964,15 @@ class EnergyFlowPriceCard extends LitElement {
     const span = Math.max(1, endMs - startMs);
     const lang = resolveLang(this._config.language, this.hass);
 
-    // extend every series to "now" with its live (or last) value
+    const nowMs = Math.min(endMs, spec.now ?? endMs);
+    const nowFrac = (nowMs - startMs) / span;
+    // extend every measured series to "now" with its live (or last) value
     const S = series.map((s) => {
-      const pts = (s.points || []).filter((p) => p.t <= endMs);
+      if (s.forecast) return { ...s, pts: (s.points || []).slice() };
+      const pts = (s.points || []).filter((p) => p.t <= nowMs);
       if (pts.length) {
         const lastV = s.live != null && !isNaN(s.live) ? s.live : pts[pts.length - 1].v;
-        pts.push({ t: endMs, v: lastV });
+        pts.push({ t: nowMs, v: lastV });
       }
       return { ...s, pts };
     });
@@ -2932,12 +3030,20 @@ class EnergyFlowPriceCard extends LitElement {
       return a >= 1000 ? (v / 1000).toFixed(1).replace(".", ",") + "k" : String(Math.round(v));
     });
 
-    const labels = timeLabels(startMs, endMs, lang);
+    const labels = timeLabels(startMs, endMs, lang, nowMs >= endMs);
 
     // cursor
     const cur = this._cursor;
     const tCur = cur == null ? null : startMs + cur * span;
-    const valueAt = (pts, t) => {
+    const valueAt = (pts, t, linear = false) => {
+      if (!pts.length || t > pts[pts.length - 1].t + 1000) return null;
+      if (linear) {
+        if (t < pts[0].t) return null;
+        for (let i = 1; i < pts.length; i++) {
+          if (pts[i].t >= t) { const a = pts[i - 1], b = pts[i]; return a.v + ((b.v - a.v) * (t - a.t)) / Math.max(1, b.t - a.t); }
+        }
+        return pts[pts.length - 1].v;
+      }
       let last = null;
       for (const p of pts) { if (p.t > t) break; last = p.v; }
       return last;
@@ -2957,13 +3063,20 @@ class EnergyFlowPriceCard extends LitElement {
       </div>
       <div class="usage-legend">
         ${S.map((s) => {
-          const v = tCur == null ? (s.live ?? (s.pts.length ? s.pts[s.pts.length - 1].v : null)) : valueAt(s.pts, tCur);
+          const v = tCur == null
+            ? (s.forecast ? valueAt(s.pts, nowMs, true) : (s.live ?? (s.pts.length ? s.pts[s.pts.length - 1].v : null)))
+            : valueAt(s.pts, tCur, !!s.forecast);
           const lbl = s.label && v != null ? s.label(v) : s.name;
+          if (s.forecast && tCur == null && s.legendNow) {
+            const off = hidden.has(s.name);
+            return html`<span class="usage-legend-item fc ${canToggle ? "tog" : ""} ${off ? "off" : ""}"
+              @click=${canToggle ? () => toggle(s.name) : null}><i class="dash" style="border-color:${s.color}"></i><b style="color:${s.color}">${s.legendNow}</b></span>`;
+          }
           const col = s.split && splitColors && v != null ? (v < 0 ? splitColors.neg : splitColors.pos) : s.color;
           const off = hidden.has(s.name);
           return html`<span class="usage-legend-item ${canToggle ? "tog" : ""} ${off ? "off" : ""}"
             title=${canToggle ? this._t(off ? "legend_show" : "legend_hide") : ""}
-            @click=${canToggle ? () => toggle(s.name) : null}><i style="background:${col}"></i>${lbl} <b style="color:${col}">${fmtVal(s.split && v != null ? Math.abs(v) : v)}</b></span>`;
+            @click=${canToggle ? () => toggle(s.name) : null}>${s.forecast ? html`<i class="dash" style="border-color:${col}"></i>` : html`<i style="background:${col}"></i>`}${lbl} <b style="color:${col}">${fmtVal(s.split && v != null ? Math.abs(v) : v)}</b></span>`;
         })}
       </div>
       <div class="chart">
@@ -2987,17 +3100,21 @@ class EnergyFlowPriceCard extends LitElement {
                       <path d="${line}" fill="none" stroke="${splitColors.pos}" stroke-width="1.5" vector-effect="non-scaling-stroke" clip-path="url(#${clipPos})"></path>
                       <path d="${line}" fill="none" stroke="${splitColors.neg}" stroke-width="1.5" vector-effect="non-scaling-stroke" clip-path="url(#${clipNeg})"></path>`;
                   }
+                  if (s.forecast) {
+                    const d = s.pts.map((p, i) => `${i ? "L" : "M"}${xOf(p.t).toFixed(2)},${yOf(p.v).toFixed(2)}`).join(" ");
+                    return svg`<path d="${d}" fill="none" stroke="${s.color}" stroke-opacity=".75" stroke-width="1.5" stroke-dasharray="4 3" vector-effect="non-scaling-stroke"></path>`;
+                  }
                   return svg`
                     ${s.area ? svg`<path d="${areaPath(s.pts)}" fill="${s.color}22"></path>` : nothing}
                     <path d="${line}" fill="none" stroke="${s.color}" stroke-width="1.5" vector-effect="non-scaling-stroke"></path>`;
                 })}
               </svg>`
             : html`<div class="empty">${error ? this._t("history_none") : loading ? this._t("history_loading") : this._t("history_none")}</div>`}
-          <div class="nowline right" data-now="${this._t("now")}" style="left:100%"></div>
+          <div class="nowline ${nowFrac > 0.85 ? "right" : ""}" data-now="${this._t("now")}" style="left:${nowFrac * 100}%"></div>
           ${tCur != null ? html`
             <div class="cursor" style="left:${cur * 100}%"></div>
             ${SV.map((s) => {
-              const v = valueAt(s.pts, tCur);
+              const v = valueAt(s.pts, tCur, !!s.forecast);
               if (v == null) return nothing;
               const col = s.split && splitColors ? (v < 0 ? splitColors.neg : splitColors.pos) : s.color;
               return html`<span class="cdot" style="left:${cur * 100}%;top:${yOf(v)}%;background:${col}"></span>`;
@@ -3007,7 +3124,7 @@ class EnergyFlowPriceCard extends LitElement {
           ${labels.map((l) => html`<span class="tick" style="left:${l.frac * 100}%">${l.text}</span>`)}
         </div>
       </div>
-      ${this._scrubber(cur == null ? 1 : cur, (f) => { this._cursor = f >= 0.999 ? null : f; this.requestUpdate(); })}
+      ${this._scrubber(cur == null ? nowFrac : cur, (f) => { this._cursor = Math.abs(f - nowFrac) < 0.003 ? null : f; this.requestUpdate(); })}
     `;
   }
 
@@ -3373,6 +3490,8 @@ class EnergyFlowPriceCard extends LitElement {
       .day.in { color: var(--efp-day-in); }
       .day.out { color: var(--efp-day-out); }
       .day.home { color: var(--efp-day-home); }
+      .day.fc { color: var(--secondary-text-color); font-weight: 500; }
+      .usage-legend-item i.dash { width: 12px; height: 0; border-radius: 0; border-top: 2px dashed; background: none; }
       .node.bl { left: 6px; bottom: 8px; }
       .node.muted { opacity: .55; }
       .node.muted .val, .node.muted .sub { opacity: .8; }
@@ -3488,7 +3607,7 @@ class EnergyFlowPriceCard extends LitElement {
 
 customElements.define("energy-flow-price-card", EnergyFlowPriceCard);
 
-console.info("%c energy-flow-price-card %c v1.18.0-fork ", "background:#7dd3fc;color:#0a1420;font-weight:700", "background:#333;color:#fff");
+console.info("%c energy-flow-price-card %c v1.19.0-fork ", "background:#7dd3fc;color:#0a1420;font-weight:700", "background:#333;color:#fff");
 
 window.customCards = window.customCards || [];
 window.customCards.push({

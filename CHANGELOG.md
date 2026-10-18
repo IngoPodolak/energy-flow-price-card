@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.19.0-fork
+
+- Solarprognose wie im HA-Energie-Dashboard (Forecast.Solar, Solcast … aus den Energie-Einstellungen): gestrichelte Linie im Solar-Diagramm (bei „Heute“ bis Mitternacht) und „Prognose heute“ in kWh unter dem Solar-Symbol. Abschaltbar (`solar_forecast`, `solar_forecast_node`).
+
 ## v1.18.0-fork
 
 - Pro Gerät einstellbar: eigene Ausblend-Schwelle in W (`min_power`, leer = globaler Wert) und Anzeige (`show`: Standard / always / active).

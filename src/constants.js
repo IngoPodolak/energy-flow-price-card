@@ -111,6 +111,8 @@ export const DEFAULTS = {
   battery_invert: false,    // single: true = positive means charging
   energy_grid_mode: "dual", // daily kWh: "dual" (energy_grid_import + energy_grid_export) | "single" (energy_grid, signed)
   energy_battery_mode: "dual",
+  solar_forecast: true,     // solar forecast from the HA energy dashboard (Forecast.Solar, Solcast …), if configured there
+  solar_forecast_node: true, // also show today's forecast kWh under the solar node
   price_show_minmax: false, // mark each day's highest / lowest price in the price chart
   // "Usage" tab: last-hour power (W) breakdown by source (solar/battery/grid). Reuses the
   // solar_power/battery_charge_power/battery_discharge_power/grid_power entities already

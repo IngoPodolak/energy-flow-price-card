@@ -37,6 +37,8 @@ color_day_in: "#34d399"        # Tageswert ins Haus
 color_day_out: "#fb923c"       # Tageswert aus dem Haus
 price_show_minmax: true        # Tageshöchst-/-tiefstpreis im Preisdiagramm
 show_daily_energy: true
+solar_forecast: true           # Prognose aus dem Energie-Dashboard im Solar-Diagramm
+solar_forecast_node: true      # Prognose heute (kWh) unter dem Solar-Symbol
 energy_solar: sensor.solar_energy_today        # optional (kWh), sonst aus dem Verlauf berechnet
 energy_grid_import: sensor.grid_import_total   # optional
 energy_grid_export: sensor.grid_export_total   # optional
