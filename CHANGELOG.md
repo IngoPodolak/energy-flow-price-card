@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.17.0-fork
+
+- Visuelle Ansicht: Größe des Hausbilds einstellbar (`house_image_scale`, 30–130 %).
+- Position des Haus-Textes wählbar (`house_label_position`: left / above / below); bei oben/unten rückt das Bild automatisch an den gegenüberliegenden Rand.
+
 ## v1.16.0-fork
 
 - Diagramme „Geräte“ und „Verbrauch“: einzelne Linien per Antippen der Legende aus- und wieder einblenden.

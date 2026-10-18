@@ -125,7 +125,9 @@ const DEFAULTS = {
   // ---- fork additions ----
   solar_position: "right",  // "right" (grid top-left, solar top-right) | "left" (original layout)
   house_image_entity: "",   // image.* entity whose picture replaces the built-in house photo
-  house_image_url: "",      // alternative: plain URL, e.g. /local/haus.png
+  house_image_url: "",
+  house_label_position: "left", // visual layout: "Home" text "left" of, "above" or "below" the picture
+  house_image_scale: 100,   // size of the house picture in % of the flow height (30-130)      // alternative: plain URL, e.g. /local/haus.png
   visual_anchors: null,     // { grid:{x,y}, solar:{x,y}, battery:{x,y}, devices:{x,y} } in % of the picture
   history_range: "today",   // default time span for solar/grid/battery/usage/device charts
   show_daily_energy: true,  // small "today kWh" line with a direction arrow under every node
@@ -420,6 +422,11 @@ const TRANSLATIONS = {
     legend_hide: "Tap to hide",
     legend_show: "Tap to show",
     ed_own_icon: "Card's own icon",
+    ed_house_scale: "House picture size",
+    ed_house_label_pos: "Home text position",
+    ed_house_label_left: "Left of the picture",
+    ed_house_label_above: "Above the picture",
+    ed_house_label_below: "Below the picture",
   },
   nl: {
     solar: "Solar",
@@ -719,6 +726,11 @@ const TRANSLATIONS = {
     legend_hide: "Antippen zum Ausblenden",
     legend_show: "Antippen zum Einblenden",
     ed_own_icon: "Eigenes Symbol der Karte",
+    ed_house_scale: "Größe Hausbild",
+    ed_house_label_pos: "Position Haus-Text",
+    ed_house_label_left: "Links neben dem Bild",
+    ed_house_label_above: "Über dem Bild",
+    ed_house_label_below: "Unter dem Bild",
   },
 };
 
@@ -978,6 +990,17 @@ class EnergyFlowPriceCardEditor extends LitElement {
               <ha-formfield label=${T("ed_reduce_effects")}>
                 <ha-switch .checked=${this._config.reduce_effects === true} @change=${(e) => this._toggle("reduce_effects", e)}></ha-switch>
               </ha-formfield>
+              <div class="slider-row">
+                <span>${T("ed_house_scale")}: <b>${this._config.house_image_scale ?? 100}%</b></span>
+                <input type="range" min="30" max="130" step="5" .value=${this._config.house_image_scale ?? 100}
+                  @input=${(e) => this._emit({ ...this._config, house_image_scale: parseInt(e.target.value, 10) })} />
+              </div>
+              <label class="sel-row">
+                <span>${T("ed_house_label_pos")}</span>
+                <select @change=${(e) => this._emit({ ...this._config, house_label_position: e.target.value })}>
+                  ${["left", "above", "below"].map((v) => html`<option value=${v} ?selected=${(this._config.house_label_position ?? "left") === v}>${T("ed_house_label_" + v)}</option>`)}
+                </select>
+              </label>
               ${this._entity("house_image_entity", T("ed_house_image"), ["image"])}
               <input class="carname-input" .value=${this._config.house_image_url ?? ""} placeholder=${T("ed_house_image_url")}
                 @change=${(e) => { const next = { ...this._config }; if (e.target.value) next.house_image_url = e.target.value.trim(); else delete next.house_image_url; this._emit(next); }} />
@@ -2334,6 +2357,23 @@ class EnergyFlowPriceCard extends LitElement {
     const homeEv = this._nodeEvents("home");
 
     const rowBases = rowWires.map((w) => baseWire(w.key, w.pts));
+    // House picture size (visual layout), in % of the flow height. The "Home" label sits
+    // just left of the picture, using its measured width (falls back to a square picture).
+    const picScale = Math.max(30, Math.min(130, parseFloat(c.house_image_scale) || 100));
+    const picHalf = g?.pic?.width ? g.pic.width / 2 : ((daily ? 236 : 190) * picScale) / 200;
+    const picHalfH = g?.pic?.height ? g.pic.height / 2 : ((daily ? 236 : 190) * picScale) / 200;
+    const labelPos = ["above", "below"].includes(c.house_label_position) ? c.house_label_position : "left";
+    // With the text above/below, the picture moves to the opposite edge to make room for it.
+    const picAlign = labelPos === "below" ? "top:0;transform:translate(-50%,0)"
+      : labelPos === "above" ? "top:auto;bottom:0;transform:translate(-50%,0)" : "";
+    const flowH = daily ? 236 : 190;
+    const picTop = g?.pic?.height ? g.pic.top : labelPos === "above" ? flowH - 2 * picHalfH : 0;
+    const picBottom = g?.pic?.height ? g.pic.bottom : picTop + 2 * picHalfH;
+    const huisStyle = labelPos === "below"
+      ? `top:${picBottom + 2}px;align-items:center;text-align:center;transform:translate(-50%, 0)`
+      : labelPos === "above"
+        ? `top:${picTop - 2}px;align-items:center;text-align:center;transform:translate(-50%, -100%)`
+        : `transform:translate(calc(-100% - ${picHalf + 22}px), -50%)`;
     const wrapStyle = `--efp-day-in:${c.color_day_in || "#34d399"};--efp-day-out:${c.color_day_out || "#fb923c"};--efp-day-home:${c.color_home}`;
 
     return html`
@@ -2351,7 +2391,7 @@ class EnergyFlowPriceCard extends LitElement {
           ${w.st.show ? svg`<path class="${liveClass(w.st)}" style="${liveStyle(w.st, w.color)}" data-speed="${w.st.duration}" d="${liveD(w.pts, false)}"></path>` : nothing}`)}
       </svg>
       <div class="flow ${visual ? "visual" : ""} ${daily ? "tall" : ""}">
-        ${visual ? html`<img class="housepic" data-anc="pic" src="${this._houseImage()}" alt="" @load=${() => this._measure(true)} />` : nothing}
+        ${visual ? html`<img class="housepic" data-anc="pic" src="${this._houseImage()}" alt="" style="height:${picScale}%;${picAlign}" @load=${() => this._measure(true)} />` : nothing}
 
         ${node("solar", !solarHasEnt, html`
           ${squareIcon("solar", "mdi:solar-power-variant", solarCol)}
@@ -2377,8 +2417,8 @@ class EnergyFlowPriceCard extends LitElement {
           ? this._renderDeviceHub(allDevs, c, devHasEnt, node, daily, dayOut)
           : this._renderDevices(devsShown, c, devHasEnt, node, dayOut, devMode)}
 
-        ${visual ? html`<div class="huis-wire"></div>` : nothing}
-        <div class="huis ${visual ? "huis-visual" : ""}${reduceEffects ? " no-fx" : ""}"
+        ${visual && labelPos === "left" ? html`<div class="huis-wire" style="left:calc(50% - ${picHalf + 6}px)"></div>` : nothing}
+        <div class="huis ${visual ? "huis-visual" : ""}${reduceEffects ? " no-fx" : ""}" style="${visual ? huisStyle : ""}"
           @pointerdown=${homeEv.down} @pointerup=${homeEv.up} @pointermove=${homeEv.move}
           @pointerleave=${homeEv.cancel} @pointercancel=${homeEv.cancel} @contextmenu=${(e) => e.preventDefault()}>
           ${visual ? nothing : html`<div class="ic" data-anc="home" style="color:${c.color_home};border-color:${c.color_home}66;background:${c.color_home}1f">
@@ -3272,7 +3312,7 @@ class EnergyFlowPriceCard extends LitElement {
       .devitem .lbl { font-size: 10.5px; color: var(--secondary-text-color); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .devitem .val { font-size: 14px; font-weight: 700; line-height: 1.1; }
       .devitem .sub { font-size: 9px; text-transform: uppercase; letter-spacing: .4px; opacity: .85; }
-      .housepic { position: absolute; top: 0; left: 50%; height: 100%; width: auto; max-width: none; transform: translateX(-50%); pointer-events: none; z-index: 0; }
+      .housepic { position: absolute; top: 50%; left: 50%; height: 100%; width: auto; max-width: none; transform: translate(-50%, -50%); pointer-events: none; z-index: 0; }
       .pmark { position: absolute; transform: translate(-50%, 0); pointer-events: none; z-index: 2; display: flex; flex-direction: column; align-items: center; }
       .pmark span { font-size: 9px; font-weight: 700; padding: 0 4px; border-radius: 4px; margin-bottom: 3px; white-space: nowrap; color: #fff; line-height: 14px; }
       .pmark::after { content: ""; width: 7px; height: 7px; border-radius: 50%; margin-bottom: -3.5px; box-shadow: 0 0 0 2px var(--card-background-color, #1c1c1c); }
@@ -3338,8 +3378,7 @@ class EnergyFlowPriceCard extends LitElement {
       .huis.huis-visual { left: 50%; top: 50%; align-items: flex-end; text-align: right; transform: translate(calc(-100% - 110px), -50%); }
       .huis.huis-visual .lbl, .huis.huis-visual .val { text-shadow: 0 1px 3px rgba(0,0,0,.8), 0 0 6px rgba(0,0,0,.6); }
       .huis.huis-visual.no-fx .lbl, .huis.huis-visual.no-fx .val { text-shadow: none; }
-      .flow.tall .huis.huis-visual { transform: translate(calc(-100% - 132px), -50%); }
-      .flow.tall .huis-wire { left: calc(50% - 132px); width: 14px; }
+
       .huis-wire { position: absolute; top: 50%; left: calc(50% - 110px); width: 15px; height: 2px; background: rgba(255,255,255,.12); transform: translateY(-50%); pointer-events: none; z-index: 0; }
       .huis .ic { width: 58px; height: 58px; border-radius: 16px; border: 1.5px solid transparent; display: flex; align-items: center; justify-content: center; }
       .huis .ic ha-icon { --mdc-icon-size: 30px; }
@@ -3422,7 +3461,7 @@ class EnergyFlowPriceCard extends LitElement {
 
 customElements.define("energy-flow-price-card", EnergyFlowPriceCard);
 
-console.info("%c energy-flow-price-card %c v1.16.0-fork ", "background:#7dd3fc;color:#0a1420;font-weight:700", "background:#333;color:#fff");
+console.info("%c energy-flow-price-card %c v1.17.0-fork ", "background:#7dd3fc;color:#0a1420;font-weight:700", "background:#333;color:#fff");
 
 window.customCards = window.customCards || [];
 window.customCards.push({

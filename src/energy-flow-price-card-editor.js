@@ -236,6 +236,17 @@ class EnergyFlowPriceCardEditor extends LitElement {
               <ha-formfield label=${T("ed_reduce_effects")}>
                 <ha-switch .checked=${this._config.reduce_effects === true} @change=${(e) => this._toggle("reduce_effects", e)}></ha-switch>
               </ha-formfield>
+              <div class="slider-row">
+                <span>${T("ed_house_scale")}: <b>${this._config.house_image_scale ?? 100}%</b></span>
+                <input type="range" min="30" max="130" step="5" .value=${this._config.house_image_scale ?? 100}
+                  @input=${(e) => this._emit({ ...this._config, house_image_scale: parseInt(e.target.value, 10) })} />
+              </div>
+              <label class="sel-row">
+                <span>${T("ed_house_label_pos")}</span>
+                <select @change=${(e) => this._emit({ ...this._config, house_label_position: e.target.value })}>
+                  ${["left", "above", "below"].map((v) => html`<option value=${v} ?selected=${(this._config.house_label_position ?? "left") === v}>${T("ed_house_label_" + v)}</option>`)}
+                </select>
+              </label>
               ${this._entity("house_image_entity", T("ed_house_image"), ["image"])}
               <input class="carname-input" .value=${this._config.house_image_url ?? ""} placeholder=${T("ed_house_image_url")}
                 @change=${(e) => { const next = { ...this._config }; if (e.target.value) next.house_image_url = e.target.value.trim(); else delete next.house_image_url; this._emit(next); }} />

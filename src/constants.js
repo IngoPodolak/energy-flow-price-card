@@ -93,7 +93,9 @@ export const DEFAULTS = {
   // ---- fork additions ----
   solar_position: "right",  // "right" (grid top-left, solar top-right) | "left" (original layout)
   house_image_entity: "",   // image.* entity whose picture replaces the built-in house photo
-  house_image_url: "",      // alternative: plain URL, e.g. /local/haus.png
+  house_image_url: "",
+  house_label_position: "left", // visual layout: "Home" text "left" of, "above" or "below" the picture
+  house_image_scale: 100,   // size of the house picture in % of the flow height (30-130)      // alternative: plain URL, e.g. /local/haus.png
   visual_anchors: null,     // { grid:{x,y}, solar:{x,y}, battery:{x,y}, devices:{x,y} } in % of the picture
   history_range: "today",   // default time span for solar/grid/battery/usage/device charts
   show_daily_energy: true,  // small "today kWh" line with a direction arrow under every node

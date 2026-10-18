@@ -203,6 +203,11 @@ const TRANSLATIONS = {
     legend_hide: "Tap to hide",
     legend_show: "Tap to show",
     ed_own_icon: "Card's own icon",
+    ed_house_scale: "House picture size",
+    ed_house_label_pos: "Home text position",
+    ed_house_label_left: "Left of the picture",
+    ed_house_label_above: "Above the picture",
+    ed_house_label_below: "Below the picture",
   },
   nl: {
     solar: "Solar",
@@ -502,6 +507,11 @@ const TRANSLATIONS = {
     legend_hide: "Antippen zum Ausblenden",
     legend_show: "Antippen zum Einblenden",
     ed_own_icon: "Eigenes Symbol der Karte",
+    ed_house_scale: "Größe Hausbild",
+    ed_house_label_pos: "Position Haus-Text",
+    ed_house_label_left: "Links neben dem Bild",
+    ed_house_label_above: "Über dem Bild",
+    ed_house_label_below: "Unter dem Bild",
   },
 };
 
