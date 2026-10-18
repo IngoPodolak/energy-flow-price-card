@@ -1,5 +1,5 @@
 import { LitElement, html, css, nothing } from "lit";
-import { DEFAULTS, DEFAULT_PRICE_STOPS, PRICE_PROFILES, DEVICE_PRESETS, DEFAULT_ANCHORS, HISTORY_RANGES } from "./constants.js";
+import { DEFAULTS, DEFAULT_PRICE_STOPS, PRICE_PROFILES, renderIcon, DEVICE_PRESETS, DEFAULT_ANCHORS, HISTORY_RANGES } from "./constants.js";
 import { t, resolveLang, SUPPORTED_LANGS } from "./translations.js";
 
 class EnergyFlowPriceCardEditor extends LitElement {
@@ -124,6 +124,15 @@ class EnergyFlowPriceCardEditor extends LitElement {
 
   // ha-icon-picker is lazy-loaded by Home Assistant; fall back to a text field until it exists.
   _iconPicker(value, label, onChange) {
+    const own = html`<label class="sel-row"><span>${this._t("ed_own_icon")}</span>
+      <select @change=${(e) => e.target.value && onChange(e.target.value)}>
+        <option value="" ?selected=${!value?.startsWith("efp:")}>—</option>
+        <option value="efp:heat-pump" ?selected=${value === "efp:heat-pump"}>${this._t("dev_heatpump")}</option>
+      </select></label>`;
+    return html`${own}${this._iconPicker2(value, label, onChange)}`;
+  }
+
+  _iconPicker2(value, label, onChange) {
     if (customElements.get("ha-icon-picker")) {
       return html`<ha-icon-picker .hass=${this.hass} .value=${value} .label=${label}
         @value-changed=${(e) => onChange(e.detail?.value ?? "")}></ha-icon-picker>`;
@@ -332,7 +341,7 @@ class EnergyFlowPriceCardEditor extends LitElement {
             return html`
               <div class="carblock">
                 <div class="carhead">
-                  <ha-icon class="devicon" icon=${car.icon || preset.icon}></ha-icon>
+                  <span class="devicon">${renderIcon(car.icon || preset.icon)}</span>
                   <input type="text" class="carname-input" placeholder=${T("ed_car_name")} .value=${car.name ?? ""}
                     @change=${(e) => this._carChange(i, "name", e)} />
                   <button class="mini" @click=${() => this._removeCar(i)} title=${T("ed_remove_car")}>✕</button>
@@ -541,7 +550,8 @@ class EnergyFlowPriceCardEditor extends LitElement {
       .addrow { display: flex; gap: 8px; align-items: center; }
       .addsel { flex: 1; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--divider-color); background: var(--card-background-color); color: var(--primary-text-color); }
       .addrow .add { align-self: auto; }
-      .devicon { --mdc-icon-size: 22px; color: var(--primary-color); }
+      .devicon { --mdc-icon-size: 22px; color: var(--primary-color); display: inline-flex; }
+      .devicon .efp-icon { width: 22px; height: 22px; }
       .colorwrap { display: inline-flex; align-items: center; gap: 6px; }
       ha-icon-picker { display: block; width: 100%; }
     `;

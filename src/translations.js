@@ -200,6 +200,9 @@ const TRANSLATIONS = {
     ed_battery_pos_e: "Battery discharged energy (kWh)",
     ed_battery_neg_e: "Battery charged energy (kWh)",
     ed_battery_invert: "Invert sign (+ = charge)",
+    legend_hide: "Tap to hide",
+    legend_show: "Tap to show",
+    ed_own_icon: "Card's own icon",
   },
   nl: {
     solar: "Solar",
@@ -496,6 +499,9 @@ const TRANSLATIONS = {
     ed_battery_pos_e: "Akku entladen Energie (kWh)",
     ed_battery_neg_e: "Akku geladen Energie (kWh)",
     ed_battery_invert: "Vorzeichen umkehren (+ = Laden)",
+    legend_hide: "Antippen zum Ausblenden",
+    legend_show: "Antippen zum Einblenden",
+    ed_own_icon: "Eigenes Symbol der Karte",
   },
 };
 

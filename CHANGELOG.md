@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.16.0-fork
+
+- Diagramme „Geräte“ und „Verbrauch“: einzelne Linien per Antippen der Legende aus- und wieder einblenden.
+- Eigenes, deutlicheres Wärmepumpen-Symbol (Außeneinheit mit Ventilator), `icon: efp:heat-pump`; bestehende Wärmepumpen nutzen es automatisch.
+
 ## v1.15.0-fork
 
 - Netz und Akku: wahlweise **eine Entität mit Vorzeichen** oder **zwei getrennte Entitäten** – für die aktuelle Leistung und für den Tageswert, jeweils mit „Vorzeichen umkehren“.

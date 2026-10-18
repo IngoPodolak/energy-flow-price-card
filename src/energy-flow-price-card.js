@@ -1,5 +1,5 @@
 import { LitElement, html, css, svg, nothing } from "lit";
-import { DEFAULTS, DEFAULT_PRICE_STOPS, PRICE_PROFILES, DEVICE_PRESETS, DEVICE_PALETTE, HISTORY_RANGES, PRICE_RANGES, DEFAULT_ANCHORS } from "./constants.js";
+import { DEFAULTS, DEFAULT_PRICE_STOPS, PRICE_PROFILES, renderIcon, DEVICE_PRESETS, DEVICE_PALETTE, HISTORY_RANGES, PRICE_RANGES, DEFAULT_ANCHORS } from "./constants.js";
 import { t, resolveLang } from "./translations.js";
 import { VISUAL_HOUSE_IMAGE } from "./assets/visual-house.js";
 import "./energy-flow-price-card-editor.js";
@@ -531,6 +531,8 @@ class EnergyFlowPriceCard extends LitElement {
   }
 
   _deviceIcon(d) {
+    // older configs stored the MDI heat pump; use the card's own, clearer drawing instead
+    if (d.type === "heatpump" && (!d.icon || d.icon === "mdi:heat-pump")) return "efp:heat-pump";
     if (d.icon) return d.icon;
     const p = DEVICE_PRESETS.find((x) => x.id === d.type);
     return p ? p.icon : "mdi:car-electric";
@@ -995,8 +997,8 @@ class EnergyFlowPriceCard extends LitElement {
     // (grid, battery), otherwise the node's icon with a small arrow badge
     // (badge ↗ = the node delivers energy, ↙ = the node takes energy).
     const dIcon = (base, badge) => badge
-      ? html`<span class="dic"><ha-icon icon="${base}"></ha-icon><ha-icon class="badge" icon="${badge}"></ha-icon></span>`
-      : html`<span class="dic"><ha-icon icon="${base}"></ha-icon></span>`;
+      ? html`<span class="dic">${renderIcon(base)}<ha-icon class="badge" icon="${badge}"></ha-icon></span>`
+      : html`<span class="dic">${renderIcon(base)}</span>`;
     const OUT_OF_NODE = "mdi:arrow-top-right-thick", INTO_NODE = "mdi:arrow-bottom-left-thick";
     const DAY_ICONS = {
       grid: { in: ["mdi:transmission-tower-import"], out: ["mdi:transmission-tower-export"] },
@@ -1022,7 +1024,7 @@ class EnergyFlowPriceCard extends LitElement {
     };
     const squareIcon = (k, icon, col) => html`
       <div class="ic" data-anc="${k}" style="color:${col};border-color:${col}66;background:${col}22">
-        <ha-icon icon="${icon}"></ha-icon>
+        ${renderIcon(icon)}
       </div>`;
 
     const homeEv = this._nodeEvents("home");
@@ -1123,9 +1125,9 @@ class EnergyFlowPriceCard extends LitElement {
               <circle cx="21" cy="21" r="${r}" fill="none" stroke="rgba(255,255,255,.12)" stroke-width="3"></circle>
               ${svg`<circle cx="21" cy="21" r="${r}" fill="none" stroke="${cc}" stroke-width="3" stroke-linecap="round" stroke-dasharray="${circ}" stroke-dashoffset="${circ * (1 - pct)}" transform="rotate(-90 21 21)"></circle>`}
             </svg>
-            <div class="ic round" style="color:${cc}"><ha-icon icon="${d.icon}"></ha-icon></div>
+            <div class="ic round" style="color:${cc}">${renderIcon(d.icon)}</div>
           </div>`
-        : html`<div class="ic" data-anc="dev${d.idx}" style="color:${cc};border-color:${cc}66;background:${cc}22"><ha-icon icon="${d.icon}"></ha-icon></div>`}
+        : html`<div class="ic" data-anc="dev${d.idx}" style="color:${cc};border-color:${cc}66;background:${cc}22">${renderIcon(d.icon)}</div>`}
       <span class="lbl">${d.name}${d.soc != null ? html` · <b style="color:${cc}">${Math.round(d.soc)}%</b>` : nothing}</span>
       <span class="val" style="color:${cc}">${fmtPower(d.power)}</span>
       ${d.active ? html`<span class="sub" style="color:${cc}">${d.isCar ? this._t("charging") : this._t("active")}</span>` : nothing}
@@ -1147,7 +1149,7 @@ class EnergyFlowPriceCard extends LitElement {
     };
     const squareIcon = (icon, cc) => html`
       <div class="ic" data-anc="devices" style="color:${cc};border-color:${cc}66;background:${cc}22">
-        <ha-icon icon="${icon}"></ha-icon>
+        ${renderIcon(icon)}
       </div>`;
     const ringIcon = (d) => {
       const cc = colOf(d);
@@ -1159,7 +1161,7 @@ class EnergyFlowPriceCard extends LitElement {
             <circle cx="26" cy="26" r="23" fill="none" stroke="rgba(255,255,255,.12)" stroke-width="3.5"></circle>
             ${hasEnt && d?.soc != null ? svg`<circle cx="26" cy="26" r="23" fill="none" stroke="${cc}" stroke-width="3.5" stroke-linecap="round" stroke-dasharray="${circ}" stroke-dashoffset="${circ * (1 - pct)}" transform="rotate(-90 26 26)"></circle>` : nothing}
           </svg>
-          <div class="ic round" style="color:${cc}"><ha-icon icon="${d.icon}"></ha-icon></div>
+          <div class="ic round" style="color:${cc}">${renderIcon(d.icon)}</div>
         </div>`;
     };
     const iconFor = (d) => (showRing && d.isCar && d.soc != null ? ringIcon(d) : squareIcon(d.icon, colOf(d)));
@@ -1486,11 +1488,11 @@ class EnergyFlowPriceCard extends LitElement {
       series = series.map((s) => ({ ...s, points: s.src ? this._srcSeries(s.src, byEntity) : (byEntity[s.entity] || []) }));
     }
 
-    return this._lineChart({ ...opts, series, spec, loading: !data.loaded, error: data.error });
+    return this._lineChart({ ...opts, series, spec, loading: !data.loaded, error: data.error, toggleKey: mode });
   }
 
   // Generic time-series chart (line/area) with a draggable time cursor underneath.
-  _lineChart({ title, series, spec, signed = false, fixedMax = null, unit = "W", splitColors = null, loading = false, error = false }) {
+  _lineChart({ title, series, spec, signed = false, fixedMax = null, unit = "W", splitColors = null, loading = false, error = false, toggleKey = null }) {
     const startMs = spec.start;
     const endMs = spec.end;
     const span = Math.max(1, endMs - startMs);
@@ -1505,9 +1507,20 @@ class EnergyFlowPriceCard extends LitElement {
       }
       return { ...s, pts };
     });
-    const hasData = S.some((s) => s.pts.length);
+    // Series switched off by tapping their legend entry (per chart, kept while the card lives).
+    const canToggle = !!toggleKey && S.length > 1;
+    const hidden = canToggle ? (this._hidden?.[toggleKey] || new Set()) : new Set();
+    const toggle = (name) => {
+      this._hidden = this._hidden || {};
+      const set = new Set(this._hidden[toggleKey] || []);
+      if (set.has(name)) set.delete(name); else set.add(name);
+      this._hidden[toggleKey] = set;
+      this.requestUpdate();
+    };
+    const SV = S.filter((s) => !hidden.has(s.name));
+    const hasData = SV.some((s) => s.pts.length);
 
-    const vals = S.flatMap((s) => s.pts.map((p) => p.v));
+    const vals = SV.flatMap((s) => s.pts.map((p) => p.v));
     let minV, maxV;
     if (fixedMax != null) { minV = 0; maxV = fixedMax; }
     else {
@@ -1576,7 +1589,10 @@ class EnergyFlowPriceCard extends LitElement {
           const v = tCur == null ? (s.live ?? (s.pts.length ? s.pts[s.pts.length - 1].v : null)) : valueAt(s.pts, tCur);
           const lbl = s.label && v != null ? s.label(v) : s.name;
           const col = s.split && splitColors && v != null ? (v < 0 ? splitColors.neg : splitColors.pos) : s.color;
-          return html`<span class="usage-legend-item"><i style="background:${col}"></i>${lbl} <b style="color:${col}">${fmtVal(s.split && v != null ? Math.abs(v) : v)}</b></span>`;
+          const off = hidden.has(s.name);
+          return html`<span class="usage-legend-item ${canToggle ? "tog" : ""} ${off ? "off" : ""}"
+            title=${canToggle ? this._t(off ? "legend_show" : "legend_hide") : ""}
+            @click=${canToggle ? () => toggle(s.name) : null}><i style="background:${col}"></i>${lbl} <b style="color:${col}">${fmtVal(s.split && v != null ? Math.abs(v) : v)}</b></span>`;
         })}
       </div>
       <div class="chart">
@@ -1589,7 +1605,7 @@ class EnergyFlowPriceCard extends LitElement {
                   <clipPath id="${clipNeg}"><rect x="0" y="${y0}" width="100" height="${Math.max(0, 100 - y0)}"></rect></clipPath>
                 </defs>
                 ${minV < 0 ? svg`<line x1="0" y1="${y0}" x2="100" y2="${y0}" stroke="var(--divider-color, rgba(255,255,255,.2))" stroke-width="1" vector-effect="non-scaling-stroke"></line>` : nothing}
-                ${S.map((s) => {
+                ${SV.map((s) => {
                   if (!s.pts.length) return nothing;
                   const line = stepPath(s.pts);
                   if (s.split && splitColors) {
@@ -1609,7 +1625,7 @@ class EnergyFlowPriceCard extends LitElement {
           <div class="nowline right" data-now="${this._t("now")}" style="left:100%"></div>
           ${tCur != null ? html`
             <div class="cursor" style="left:${cur * 100}%"></div>
-            ${S.map((s) => {
+            ${SV.map((s) => {
               const v = valueAt(s.pts, tCur);
               if (v == null) return nothing;
               const col = s.split && splitColors ? (v < 0 ? splitColors.neg : splitColors.pos) : s.color;
@@ -1978,7 +1994,10 @@ class EnergyFlowPriceCard extends LitElement {
       .node:active .ic, .node:active .socwrap { transform: scale(.94); }
       .day { display: inline-flex; align-items: center; gap: 3px; font-size: 12.5px; font-weight: 600; white-space: nowrap; font-variant-numeric: tabular-nums; margin-top: 2px; line-height: 1.15; }
       .day .dic { position: relative; display: inline-flex; width: 18px; height: 18px; align-items: center; justify-content: center; }
-      .day .dic ha-icon { --mdc-icon-size: 17px; }
+      .day .dic ha-icon, .day .dic .efp-icon { --mdc-icon-size: 17px; }
+      .ic .efp-icon { width: 25px; height: 25px; }
+      .devitem .ic .efp-icon { width: 23px; height: 23px; }
+      .efp-icon { width: var(--mdc-icon-size, 24px); height: var(--mdc-icon-size, 24px); display: block; flex: 0 0 auto; }
       .day .dic ha-icon.badge { position: absolute; right: -5px; bottom: -4px; --mdc-icon-size: 11px; background: var(--card-background-color, #1c1c1c); border-radius: 50%; }
       .day.in { color: var(--efp-day-in); }
       .day.out { color: var(--efp-day-out); }
@@ -2087,6 +2106,10 @@ class EnergyFlowPriceCard extends LitElement {
       /* Usage tab: last-hour power (W) line chart, split by source. */
       .usage-legend { display: flex; align-items: baseline; gap: 4px 12px; flex-wrap: wrap; margin: -4px 0 8px; }
       .usage-legend-item b { font-weight: 700; margin-left: 2px; }
+      .usage-legend-item.tog { cursor: pointer; user-select: none; border-radius: 6px; padding: 1px 5px; margin: 0 -5px; transition: opacity .15s, background .15s; }
+      .usage-legend-item.tog:hover { background: rgba(127,127,127,.12); }
+      .usage-legend-item.off { opacity: .38; text-decoration: line-through; }
+      .usage-legend-item.off i { background: transparent !important; outline: 1.5px solid currentColor; outline-offset: -1.5px; }
       .usage-legend-item { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--secondary-text-color); }
       .usage-legend-item i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; }
     `;
@@ -2095,7 +2118,7 @@ class EnergyFlowPriceCard extends LitElement {
 
 customElements.define("energy-flow-price-card", EnergyFlowPriceCard);
 
-console.info("%c energy-flow-price-card %c v1.15.0-fork ", "background:#7dd3fc;color:#0a1420;font-weight:700", "background:#333;color:#fff");
+console.info("%c energy-flow-price-card %c v1.16.0-fork ", "background:#7dd3fc;color:#0a1420;font-weight:700", "background:#333;color:#fff");
 
 window.customCards = window.customCards || [];
 window.customCards.push({

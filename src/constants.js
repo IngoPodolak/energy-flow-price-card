@@ -1,3 +1,5 @@
+import { html, svg } from "lit";
+
 export const DEFAULT_PRICE_STOPS = [
   { value: 0.0, color: "#3b82f6" },  // blauw
   { value: 0.2, color: "#3b82f6" },  // blauw tot 0,20
@@ -119,7 +121,7 @@ export const DEVICE_PRESETS = [
   { id: "car", icon: "mdi:car-electric" },
   { id: "wallbox", icon: "mdi:ev-station" },
   { id: "ac", icon: "mdi:air-conditioner" },
-  { id: "heatpump", icon: "mdi:heat-pump" },
+  { id: "heatpump", icon: "efp:heat-pump" },
   { id: "gardenpump", icon: "mdi:water-pump" },
   { id: "oven", icon: "mdi:toaster-oven" },
   { id: "hob", icon: "mdi:stove" },
@@ -154,3 +156,28 @@ export const DEFAULT_ANCHORS = {
   battery: { x: 58, y: 63 },
   devices: { x: 76, y: 81 },
 };
+
+// Own icons (prefix "efp:") for things MDI doesn't draw convincingly. Everything else is
+// passed straight to <ha-icon>.
+const EFP_ICONS = {
+  // heat pump outdoor unit: housing, fan with three blades, grille, feet and rising warmth
+  "heat-pump": svg`
+    <path d="M8.2 4.4c-.7-.7.7-1.3 0-2M11.2 4.4c-.7-.7.7-1.3 0-2M14.2 4.4c-.7-.7.7-1.3 0-2" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"></path>
+    <rect x="1.8" y="6" width="20.4" height="13.2" rx="2.2" fill="none" stroke="currentColor" stroke-width="1.7"></rect>
+    <circle cx="8.6" cy="12.6" r="4.4" fill="none" stroke="currentColor" stroke-width="1.3"></circle>
+    <g fill="currentColor">
+      <path d="M8.6 12.6c-.9-1.4-.7-3.3.9-3.9 1.4.9 1.1 2.9-.9 3.9z"></path>
+      <path d="M8.6 12.6c-.9-1.4-.7-3.3.9-3.9 1.4.9 1.1 2.9-.9 3.9z" transform="rotate(120 8.6 12.6)"></path>
+      <path d="M8.6 12.6c-.9-1.4-.7-3.3.9-3.9 1.4.9 1.1 2.9-.9 3.9z" transform="rotate(240 8.6 12.6)"></path>
+      <circle cx="8.6" cy="12.6" r=".9"></circle>
+    </g>
+    <path d="M15.4 9.6h4.2M15.4 12.6h4.2M15.4 15.6h4.2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"></path>
+    <path d="M5 19.2v1.8M19 19.2v1.8" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"></path>`,
+};
+
+export function renderIcon(icon, cls = "") {
+  if (icon && icon.startsWith("efp:") && EFP_ICONS[icon.slice(4)]) {
+    return html`<svg class="efp-icon ${cls}" viewBox="0 0 24 24" aria-hidden="true">${EFP_ICONS[icon.slice(4)]}</svg>`;
+  }
+  return html`<ha-icon class="${cls}" icon="${icon || "mdi:power-plug"}"></ha-icon>`;
+}
