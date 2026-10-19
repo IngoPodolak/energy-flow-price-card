@@ -369,7 +369,7 @@ const TRANSLATIONS = {
     ed_solar_right: "Grid left, solar right",
     ed_solar_left: "Solar left, grid right (original)",
     ed_house_image: "Own house picture (image entity) — optional",
-    ed_house_image_url: "or picture URL, e.g. /local/house.png",
+    ed_house_image_url: "…or enter a path/URL, e.g. /local/house.png or /media/house.png",
     ed_anchors: "Wire end points in the picture",
     ed_anchor_note: "With your own picture, set where the wires end (in % from the left and from the top).",
     ed_anchor_x: "from left",
@@ -450,6 +450,9 @@ const TRANSLATIONS = {
     ed_price_costs: "Show electricity costs (grid import) – today, plus yesterday for windows over 24 h",
     cost_today: "Electricity costs today (grid import)",
     ed_home_costs: "Show today's electricity costs under \"Home\"",
+    ed_house_upload: "Upload picture",
+    ed_house_media: "…or pick from the media folder",
+    ed_house_image_note: "Pictures in config/www are reachable as /local/…, pictures in the media folder as /media/… (the card fetches a valid signed link automatically).",
   },
   nl: {
     solar: "Solar",
@@ -691,7 +694,7 @@ const TRANSLATIONS = {
     ed_solar_right: "Netz links, Solar rechts",
     ed_solar_left: "Solar links, Netz rechts (wie Original)",
     ed_house_image: "Eigenes Hausbild (Bild-Entität) — optional",
-    ed_house_image_url: "oder Bild-URL, z. B. /local/haus.png",
+    ed_house_image_url: "…oder Pfad/URL eingeben, z. B. /local/haus.png oder /media/haus.png",
     ed_anchors: "Linien-Endpunkte im Bild",
     ed_anchor_note: "Bei einem eigenen Bild hier einstellen, wo die Linien im Bild enden (in % von links und von oben).",
     ed_anchor_x: "von links",
@@ -772,6 +775,9 @@ const TRANSLATIONS = {
     ed_price_costs: "Stromkosten (Netzbezug) anzeigen – heute, bei mehr als 24 h auch gestern",
     cost_today: "Stromkosten heute (Netzbezug)",
     ed_home_costs: "Heutige Stromkosten unter „Haus“ anzeigen",
+    ed_house_upload: "Bild hochladen",
+    ed_house_media: "…oder aus dem Medien-Ordner wählen",
+    ed_house_image_note: "Bilder in config/www erreichst du mit /local/…, Bilder im Medien-Ordner mit /media/… (die Karte holt sich dafür automatisch einen gültigen Link).",
   },
 };
 
@@ -914,6 +920,37 @@ class EnergyFlowPriceCardEditor extends LitElement {
           </ha-formfield>` : html`
           ${this._entity(pos, T(`ed_${kind}_pos${sfx}`), energy ? ["sensor"] : undefined)}
           ${this._entity(neg, T(`ed_${kind}_neg${sfx}`), energy ? ["sensor"] : undefined)}`}
+      </div>`;
+  }
+
+  // Upload (HA image upload, like the picture card) and pick from the media folder.
+  _imagePickers() {
+    const T = (k) => this._t(k);
+    if (!customElements.get("ha-selector")) return nothing;
+    const uploaded = (this._config.house_image_url || "").startsWith("/api/image/serve/") ? this._config.house_image_url : "";
+    const media = this._config.house_image_media
+      ? { entity_id: "", media_content_id: this._config.house_image_media, media_content_type: "image/png" } : undefined;
+    return html`
+      <div class="pickrow">
+        <span class="picklbl">${T("ed_house_upload")}</span>
+        <ha-selector .hass=${this.hass} .selector=${{ image: { original: true } }} .value=${uploaded}
+          @value-changed=${(e) => {
+            const v = e.detail?.value;
+            const next = { ...this._config };
+            delete next.house_image_media;
+            if (v) next.house_image_url = v; else if (uploaded) delete next.house_image_url;
+            this._emit(next);
+          }}></ha-selector>
+      </div>
+      <div class="pickrow">
+        <span class="picklbl">${T("ed_house_media")}</span>
+        <ha-selector .hass=${this.hass} .selector=${{ media: { accept: ["image/*"] } }} .value=${media}
+          @value-changed=${(e) => {
+            const id = e.detail?.value?.media_content_id;
+            const next = { ...this._config };
+            if (id) { next.house_image_media = id; delete next.house_image_url; } else delete next.house_image_media;
+            this._emit(next);
+          }}></ha-selector>
       </div>`;
   }
 
@@ -1079,8 +1116,10 @@ class EnergyFlowPriceCardEditor extends LitElement {
                 </select>
               </label>
               ${this._entity("house_image_entity", T("ed_house_image"), ["image"])}
+              ${this._imagePickers()}
               <input class="carname-input" .value=${this._config.house_image_url ?? ""} placeholder=${T("ed_house_image_url")}
-                @change=${(e) => { const next = { ...this._config }; if (e.target.value) next.house_image_url = e.target.value.trim(); else delete next.house_image_url; this._emit(next); }} />
+                @change=${(e) => { const next = { ...this._config }; if (e.target.value) next.house_image_url = e.target.value.trim(); else delete next.house_image_url; delete next.house_image_media; this._emit(next); }} />
+              <div class="note">${T("ed_house_image_note")}</div>
               <details class="anchors">
                 <summary>${T("ed_anchors")}</summary>
                 <div class="note">${T("ed_anchor_note")}</div>
@@ -1414,6 +1453,9 @@ class EnergyFlowPriceCardEditor extends LitElement {
       .mini { border-color: var(--error-color, #ef4444); color: var(--error-color, #ef4444); padding: 2px 8px; }
       .add { align-self: flex-start; }
       .version { order: 99; font-size: 11px; color: var(--secondary-text-color); text-align: right; opacity: .8; }
+      .pickrow { display: flex; flex-direction: column; gap: 4px; }
+      .picklbl { font-size: 13px; color: var(--secondary-text-color); }
+      ha-selector { display: block; width: 100%; }
       .chk { display: flex; align-items: center; gap: 8px; font-size: 13px; }
       .srcblock { display: flex; flex-direction: column; gap: 8px; border: 1px solid var(--divider-color); border-radius: 10px; padding: 10px; }
       .srchead { font-weight: 600; }
@@ -1519,6 +1561,17 @@ function fmtKWh(kwh) {
   if (kwh == null || isNaN(kwh)) return "–";
   return kwh.toFixed(Math.abs(kwh) >= 100 ? 0 : 1).replace(".", ",");
 }
+// "/media/haus.png", "/homeassistant/media/haus.png", "media/haus.png" or a media-source id
+// -> "media-source://media_source/local/haus.png"
+function toMediaSource(u) {
+  if (!u || typeof u !== "string") return null;
+  const v = u.trim();
+  if (v.startsWith("media-source://")) return v;
+  const m = v.match(/^\/?(?:homeassistant\/|config\/)?media\/(.+)$/i);
+  if (m && !/^\/?local\//i.test(v)) return "media-source://media_source/local/" + m[1].replace(/^local\//i, "");
+  return null;
+}
+
 function polyD(pts) {
   return pts.map((p, i) => `${i ? "L" : "M"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
 }
@@ -2027,8 +2080,30 @@ class EnergyFlowPriceCard extends LitElement {
     const ent = c.house_image_entity && this.hass?.states?.[c.house_image_entity];
     const pic = ent?.attributes?.entity_picture;
     if (pic) return pic;
+    const media = c.house_image_media || toMediaSource(c.house_image_url);
+    if (media) return this._resolveMedia(media) || VISUAL_HOUSE_IMAGE;
     if (c.house_image_url) return c.house_image_url;
     return VISUAL_HOUSE_IMAGE;
+  }
+
+  // Files in the HA media folder are only reachable through a signed URL; ask HA for one
+  // (valid for a day) and refresh it in time.
+  _resolveMedia(id) {
+    this._media = this._media || {};
+    const m = this._media[id];
+    const now = Date.now();
+    if (m && m.url && now < m.until) return m.url;
+    if (!m || (!m.busy && now - (m.tried || 0) > 30000)) {
+      this._media[id] = { ...(m || {}), busy: true, tried: now };
+      this.hass?.callWS?.({ type: "media_source/resolve_media", media_content_id: id, expires: 86400 })
+        .then((r) => {
+          const url = r?.url ? (this.hass.hassUrl ? this.hass.hassUrl(r.url) : r.url) : null;
+          this._media[id] = { url, until: Date.now() + 23 * 3600000, busy: false, tried: Date.now() };
+          this.requestUpdate();
+        })
+        .catch(() => { this._media[id] = { ...(this._media[id] || {}), busy: false, error: true }; this.requestUpdate(); });
+    }
+    return m?.url || null;
   }
 
   // ---------------------------------------------------------------------------
@@ -3839,8 +3914,8 @@ class EnergyFlowPriceCard extends LitElement {
 
 customElements.define("energy-flow-price-card", EnergyFlowPriceCard);
 
-window.__EFPC_VERSION = "1.22.0-fork";
-console.info("%c energy-flow-price-card %c v1.22.0-fork ", "background:#7dd3fc;color:#0a1420;font-weight:700", "background:#333;color:#fff");
+window.__EFPC_VERSION = "1.23.0-fork";
+console.info("%c energy-flow-price-card %c v1.23.0-fork ", "background:#7dd3fc;color:#0a1420;font-weight:700", "background:#333;color:#fff");
 
 window.customCards = window.customCards || [];
 window.customCards.push({

@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.23.0-fork
+
+- Hausbild: Hochladen direkt im Editor und Auswahl aus dem Medien-Ordner (`house_image_media`). Pfade wie `/media/haus.png` oder `/homeassistant/media/haus.png` werden automatisch über einen signierten Link geladen.
+
 ## v1.22.0-fork
 
 - Heutige Stromkosten (Netzbezug × Preis) unter „Haus“, abschaltbar (`home_show_costs`).

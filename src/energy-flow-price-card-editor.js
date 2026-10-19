@@ -122,6 +122,37 @@ class EnergyFlowPriceCardEditor extends LitElement {
       </div>`;
   }
 
+  // Upload (HA image upload, like the picture card) and pick from the media folder.
+  _imagePickers() {
+    const T = (k) => this._t(k);
+    if (!customElements.get("ha-selector")) return nothing;
+    const uploaded = (this._config.house_image_url || "").startsWith("/api/image/serve/") ? this._config.house_image_url : "";
+    const media = this._config.house_image_media
+      ? { entity_id: "", media_content_id: this._config.house_image_media, media_content_type: "image/png" } : undefined;
+    return html`
+      <div class="pickrow">
+        <span class="picklbl">${T("ed_house_upload")}</span>
+        <ha-selector .hass=${this.hass} .selector=${{ image: { original: true } }} .value=${uploaded}
+          @value-changed=${(e) => {
+            const v = e.detail?.value;
+            const next = { ...this._config };
+            delete next.house_image_media;
+            if (v) next.house_image_url = v; else if (uploaded) delete next.house_image_url;
+            this._emit(next);
+          }}></ha-selector>
+      </div>
+      <div class="pickrow">
+        <span class="picklbl">${T("ed_house_media")}</span>
+        <ha-selector .hass=${this.hass} .selector=${{ media: { accept: ["image/*"] } }} .value=${media}
+          @value-changed=${(e) => {
+            const id = e.detail?.value?.media_content_id;
+            const next = { ...this._config };
+            if (id) { next.house_image_media = id; delete next.house_image_url; } else delete next.house_image_media;
+            this._emit(next);
+          }}></ha-selector>
+      </div>`;
+  }
+
   // Forecast sources from the energy dashboard; with several solar systems each card can pick its own.
   _forecastSources() {
     const T = (k) => this._t(k);
@@ -284,8 +315,10 @@ class EnergyFlowPriceCardEditor extends LitElement {
                 </select>
               </label>
               ${this._entity("house_image_entity", T("ed_house_image"), ["image"])}
+              ${this._imagePickers()}
               <input class="carname-input" .value=${this._config.house_image_url ?? ""} placeholder=${T("ed_house_image_url")}
-                @change=${(e) => { const next = { ...this._config }; if (e.target.value) next.house_image_url = e.target.value.trim(); else delete next.house_image_url; this._emit(next); }} />
+                @change=${(e) => { const next = { ...this._config }; if (e.target.value) next.house_image_url = e.target.value.trim(); else delete next.house_image_url; delete next.house_image_media; this._emit(next); }} />
+              <div class="note">${T("ed_house_image_note")}</div>
               <details class="anchors">
                 <summary>${T("ed_anchors")}</summary>
                 <div class="note">${T("ed_anchor_note")}</div>
@@ -619,6 +652,9 @@ class EnergyFlowPriceCardEditor extends LitElement {
       .mini { border-color: var(--error-color, #ef4444); color: var(--error-color, #ef4444); padding: 2px 8px; }
       .add { align-self: flex-start; }
       .version { order: 99; font-size: 11px; color: var(--secondary-text-color); text-align: right; opacity: .8; }
+      .pickrow { display: flex; flex-direction: column; gap: 4px; }
+      .picklbl { font-size: 13px; color: var(--secondary-text-color); }
+      ha-selector { display: block; width: 100%; }
       .chk { display: flex; align-items: center; gap: 8px; font-size: 13px; }
       .srcblock { display: flex; flex-direction: column; gap: 8px; border: 1px solid var(--divider-color); border-radius: 10px; padding: 10px; }
       .srchead { font-weight: 600; }

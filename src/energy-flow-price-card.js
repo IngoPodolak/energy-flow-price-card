@@ -78,6 +78,17 @@ function fmtKWh(kwh) {
   if (kwh == null || isNaN(kwh)) return "–";
   return kwh.toFixed(Math.abs(kwh) >= 100 ? 0 : 1).replace(".", ",");
 }
+// "/media/haus.png", "/homeassistant/media/haus.png", "media/haus.png" or a media-source id
+// -> "media-source://media_source/local/haus.png"
+function toMediaSource(u) {
+  if (!u || typeof u !== "string") return null;
+  const v = u.trim();
+  if (v.startsWith("media-source://")) return v;
+  const m = v.match(/^\/?(?:homeassistant\/|config\/)?media\/(.+)$/i);
+  if (m && !/^\/?local\//i.test(v)) return "media-source://media_source/local/" + m[1].replace(/^local\//i, "");
+  return null;
+}
+
 function polyD(pts) {
   return pts.map((p, i) => `${i ? "L" : "M"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
 }
@@ -586,8 +597,30 @@ class EnergyFlowPriceCard extends LitElement {
     const ent = c.house_image_entity && this.hass?.states?.[c.house_image_entity];
     const pic = ent?.attributes?.entity_picture;
     if (pic) return pic;
+    const media = c.house_image_media || toMediaSource(c.house_image_url);
+    if (media) return this._resolveMedia(media) || VISUAL_HOUSE_IMAGE;
     if (c.house_image_url) return c.house_image_url;
     return VISUAL_HOUSE_IMAGE;
+  }
+
+  // Files in the HA media folder are only reachable through a signed URL; ask HA for one
+  // (valid for a day) and refresh it in time.
+  _resolveMedia(id) {
+    this._media = this._media || {};
+    const m = this._media[id];
+    const now = Date.now();
+    if (m && m.url && now < m.until) return m.url;
+    if (!m || (!m.busy && now - (m.tried || 0) > 30000)) {
+      this._media[id] = { ...(m || {}), busy: true, tried: now };
+      this.hass?.callWS?.({ type: "media_source/resolve_media", media_content_id: id, expires: 86400 })
+        .then((r) => {
+          const url = r?.url ? (this.hass.hassUrl ? this.hass.hassUrl(r.url) : r.url) : null;
+          this._media[id] = { url, until: Date.now() + 23 * 3600000, busy: false, tried: Date.now() };
+          this.requestUpdate();
+        })
+        .catch(() => { this._media[id] = { ...(this._media[id] || {}), busy: false, error: true }; this.requestUpdate(); });
+    }
+    return m?.url || null;
   }
 
   // ---------------------------------------------------------------------------
@@ -2398,8 +2431,8 @@ class EnergyFlowPriceCard extends LitElement {
 
 customElements.define("energy-flow-price-card", EnergyFlowPriceCard);
 
-window.__EFPC_VERSION = "1.22.0-fork";
-console.info("%c energy-flow-price-card %c v1.22.0-fork ", "background:#7dd3fc;color:#0a1420;font-weight:700", "background:#333;color:#fff");
+window.__EFPC_VERSION = "1.23.0-fork";
+console.info("%c energy-flow-price-card %c v1.23.0-fork ", "background:#7dd3fc;color:#0a1420;font-weight:700", "background:#333;color:#fff");
 
 window.customCards = window.customCards || [];
 window.customCards.push({

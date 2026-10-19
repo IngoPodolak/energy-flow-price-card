@@ -145,7 +145,7 @@ const TRANSLATIONS = {
     ed_solar_right: "Grid left, solar right",
     ed_solar_left: "Solar left, grid right (original)",
     ed_house_image: "Own house picture (image entity) — optional",
-    ed_house_image_url: "or picture URL, e.g. /local/house.png",
+    ed_house_image_url: "…or enter a path/URL, e.g. /local/house.png or /media/house.png",
     ed_anchors: "Wire end points in the picture",
     ed_anchor_note: "With your own picture, set where the wires end (in % from the left and from the top).",
     ed_anchor_x: "from left",
@@ -226,6 +226,9 @@ const TRANSLATIONS = {
     ed_price_costs: "Show electricity costs (grid import) – today, plus yesterday for windows over 24 h",
     cost_today: "Electricity costs today (grid import)",
     ed_home_costs: "Show today's electricity costs under \"Home\"",
+    ed_house_upload: "Upload picture",
+    ed_house_media: "…or pick from the media folder",
+    ed_house_image_note: "Pictures in config/www are reachable as /local/…, pictures in the media folder as /media/… (the card fetches a valid signed link automatically).",
   },
   nl: {
     solar: "Solar",
@@ -467,7 +470,7 @@ const TRANSLATIONS = {
     ed_solar_right: "Netz links, Solar rechts",
     ed_solar_left: "Solar links, Netz rechts (wie Original)",
     ed_house_image: "Eigenes Hausbild (Bild-Entität) — optional",
-    ed_house_image_url: "oder Bild-URL, z. B. /local/haus.png",
+    ed_house_image_url: "…oder Pfad/URL eingeben, z. B. /local/haus.png oder /media/haus.png",
     ed_anchors: "Linien-Endpunkte im Bild",
     ed_anchor_note: "Bei einem eigenen Bild hier einstellen, wo die Linien im Bild enden (in % von links und von oben).",
     ed_anchor_x: "von links",
@@ -548,6 +551,9 @@ const TRANSLATIONS = {
     ed_price_costs: "Stromkosten (Netzbezug) anzeigen – heute, bei mehr als 24 h auch gestern",
     cost_today: "Stromkosten heute (Netzbezug)",
     ed_home_costs: "Heutige Stromkosten unter „Haus“ anzeigen",
+    ed_house_upload: "Bild hochladen",
+    ed_house_media: "…oder aus dem Medien-Ordner wählen",
+    ed_house_image_note: "Bilder in config/www erreichst du mit /local/…, Bilder im Medien-Ordner mit /media/… (die Karte holt sich dafür automatisch einen gültigen Link).",
   },
 };
 
