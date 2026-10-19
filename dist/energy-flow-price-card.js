@@ -1915,13 +1915,15 @@ class EnergyFlowPriceCard extends LitElement {
     }
     const dirSwap = w.dirPhase !== "idle";
 
-    // speed: linear from 0..flow_max_power, scaled by flow_speed multiplier.
+    // speed: strictly proportional to the power (twice the watts -> twice as fast), so
+    // lines can be compared with each other. Capped at flow_max_power (full speed) and
+    // with a small floor so a few watts still visibly move. flow_speed scales everything.
     const maxP = Math.max(100, c.flow_max_power ?? 5000);
     const frac = Math.max(0, Math.min(1, p / maxP));
     const speedMul = Math.max(0.1, c.flow_speed ?? 1.0);
-    // duration: fast (small number) at high power, slow (large) near zero.
-    // frac 1 -> ~0.5s, frac ~0 -> ~6s. Divided by the user multiplier.
-    const duration = active ? (6 - 5.5 * frac) / speedMul : 0;
+    const MAX_RATE = 6;                                  // animation cycles per second at full power
+    const rate = Math.max(0.06, MAX_RATE * frac) * speedMul;
+    const duration = active ? 1 / rate : 0;
 
     // fade direction
     let fade = null;
@@ -3917,8 +3919,8 @@ class EnergyFlowPriceCard extends LitElement {
 
 customElements.define("energy-flow-price-card", EnergyFlowPriceCard);
 
-window.__EFPC_VERSION = "1.23.1-fork";
-console.info("%c energy-flow-price-card %c v1.23.1-fork ", "background:#7dd3fc;color:#0a1420;font-weight:700", "background:#333;color:#fff");
+window.__EFPC_VERSION = "1.24.0-fork";
+console.info("%c energy-flow-price-card %c v1.24.0-fork ", "background:#7dd3fc;color:#0a1420;font-weight:700", "background:#333;color:#fff");
 
 window.customCards = window.customCards || [];
 window.customCards.push({

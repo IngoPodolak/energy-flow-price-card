@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.24.0-fork
+
+- Fluss-Animation: Geschwindigkeit jetzt streng proportional zur Leistung (doppelte Leistung = doppelt so schnell), damit die Linien untereinander vergleichbar sind.
+
 ## v1.23.1-fork
 
 - Visuelle Ansicht: Linien enden ohne zusätzlichen Knick genau am eingestellten Endpunkt.
