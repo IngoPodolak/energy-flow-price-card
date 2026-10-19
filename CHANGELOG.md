@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.23.1-fork
+
+- Visuelle Ansicht: Linien enden ohne zusätzlichen Knick genau am eingestellten Endpunkt.
+
 ## v1.23.0-fork
 
 - Hausbild: Hochladen direkt im Editor und Auswahl aus dem Medien-Ordner (`house_image_media`). Pfade wie `/media/haus.png` oder `/homeassistant/media/haus.png` werden automatisch über einen signierten Link geladen.

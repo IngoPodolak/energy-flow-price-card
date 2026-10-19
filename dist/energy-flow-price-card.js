@@ -2475,8 +2475,9 @@ class EnergyFlowPriceCard extends LitElement {
           const left = sideOf(k) === "left";
           const iconX = left ? a.right + 8 : a.left - 8;
           const iconY = isTop(k) ? 4 : H - 4;
-          const fx = frame[sideOf(k)];
-          wirePts[k] = [{ x: iconX, y: iconY }, { x: fx, y: iconY }, { x: fx, y: EP[k].y }, { x: EP[k].x, y: EP[k].y }];
+          // straight along the edge to exactly above/below the anchor, then straight down/up
+          // into it: one bend only, the line ends exactly at the configured end point
+          wirePts[k] = [{ x: iconX, y: iconY }, { x: EP[k].x, y: iconY }, { x: EP[k].x, y: EP[k].y }];
         }
       }
     }
@@ -2606,10 +2607,12 @@ class EnergyFlowPriceCard extends LitElement {
     const flowH = daily ? 236 : 190;
     const picTop = g?.pic?.height ? g.pic.top : labelPos === "above" ? flowH - 2 * picHalfH : 0;
     const picBottom = g?.pic?.height ? g.pic.bottom : picTop + 2 * picHalfH;
+    // keep the text inside the flow area (it can be 3 lines high with kWh + costs)
+    const lblH = g?.huislbl?.height || 60;
     const huisStyle = labelPos === "below"
-      ? `top:${picBottom + 2}px;align-items:center;text-align:center;transform:translate(-50%, 0)`
+      ? `top:${Math.max(0, Math.min(picBottom + 2, flowH - lblH))}px;align-items:center;text-align:center;transform:translate(-50%, 0)`
       : labelPos === "above"
-        ? `top:${picTop - 2}px;align-items:center;text-align:center;transform:translate(-50%, -100%)`
+        ? `top:${Math.max(0, picTop - 2 - lblH)}px;align-items:center;text-align:center;transform:translate(-50%, 0)`
         : `transform:translate(calc(-100% - ${picHalf + 22}px), -50%)`;
     const wrapStyle = `--efp-day-in:${c.color_day_in || "#34d399"};--efp-day-out:${c.color_day_out || "#fb923c"};--efp-day-home:${c.color_home}`;
 
@@ -2655,7 +2658,7 @@ class EnergyFlowPriceCard extends LitElement {
           : this._renderDevices(devsShown, c, devHasEnt, node, dayOut, devMode)}
 
         ${visual && labelPos === "left" ? html`<div class="huis-wire" style="left:calc(50% - ${picHalf + 6}px)"></div>` : nothing}
-        <div class="huis ${visual ? "huis-visual" : ""}${reduceEffects ? " no-fx" : ""}" style="${visual ? huisStyle : ""}"
+        <div class="huis ${visual ? "huis-visual" : ""}${reduceEffects ? " no-fx" : ""}" data-anc="huislbl" style="${visual ? huisStyle : ""}"
           @pointerdown=${homeEv.down} @pointerup=${homeEv.up} @pointermove=${homeEv.move}
           @pointerleave=${homeEv.cancel} @pointercancel=${homeEv.cancel} @contextmenu=${(e) => e.preventDefault()}>
           ${visual ? nothing : html`<div class="ic" data-anc="home" style="color:${c.color_home};border-color:${c.color_home}66;background:${c.color_home}1f">
@@ -3914,8 +3917,8 @@ class EnergyFlowPriceCard extends LitElement {
 
 customElements.define("energy-flow-price-card", EnergyFlowPriceCard);
 
-window.__EFPC_VERSION = "1.23.0-fork";
-console.info("%c energy-flow-price-card %c v1.23.0-fork ", "background:#7dd3fc;color:#0a1420;font-weight:700", "background:#333;color:#fff");
+window.__EFPC_VERSION = "1.23.1-fork";
+console.info("%c energy-flow-price-card %c v1.23.1-fork ", "background:#7dd3fc;color:#0a1420;font-weight:700", "background:#333;color:#fff");
 
 window.customCards = window.customCards || [];
 window.customCards.push({
