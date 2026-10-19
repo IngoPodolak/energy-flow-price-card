@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.24.1-fork
+
+- Zeitlinie des Schiebereglers dicker und leuchtend weiß (auch im Preisdiagramm).
+
 ## v1.24.0-fork
 
 - Fluss-Animation: Geschwindigkeit jetzt streng proportional zur Leistung (doppelte Leistung = doppelt so schnell), damit die Linien untereinander vergleichbar sind.

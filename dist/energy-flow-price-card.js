@@ -3572,7 +3572,7 @@ class EnergyFlowPriceCard extends LitElement {
         <span class="t">${this._t("price_title")} (${hours}h)</span>
         <div class="chdr-right">
           ${sel
-            ? html`<span class="now sel"><ha-icon icon="mdi:flash"></ha-icon>${new Date(sel.t).toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" })}: <b>${sel.v.toFixed(3).replace(".", ",")}</b>${this._tapLock ? this._resetBtn(() => { this._selectedSlot = null; this._tapLock = false; this.requestUpdate(); }) : nothing}</span>`
+            ? html`<span class="now sel"><ha-icon icon="mdi:flash"></ha-icon>${new Date(sel.t).toLocaleString(resolveLang(c.language, this.hass), { weekday: "short", hour: "2-digit", minute: "2-digit" })}: <b>${sel.v.toFixed(3).replace(".", ",")}</b>${this._tapLock ? this._resetBtn(() => { this._selectedSlot = null; this._tapLock = false; this.requestUpdate(); }) : nothing}</span>`
             : current !== null
               ? html`<span class="now"><ha-icon icon="mdi:flash"></ha-icon>${this._t("now")}: <b>${current.toFixed(3).replace(".", ",")}</b></span>`
               : nothing}
@@ -3595,6 +3595,12 @@ class EnergyFlowPriceCard extends LitElement {
             return html`<div class="pmark ${m.kind}" style="left:${x}%;bottom:${y}%"><span>${m.kind === "max" ? "▲" : "▼"} ${sl.v.toFixed(2).replace(".", ",")}</span></div>`;
           })}
           <div class="nowline" data-now="${this._t("now")}" style="left:${nowFrac * 100}%"></div>
+          ${sel && this._tapLock ? (() => {
+            const i = slots.findIndex((x) => x.t === sel.t);
+            if (i < 0) return nothing;
+            const x = profile.chart_style === "bars" ? ((i + 0.5) / slots.length) * 100 : (i / Math.max(1, slots.length - 1)) * 100;
+            return html`<div class="cursor" style="left:${x}%"></div>`;
+          })() : nothing}
         </div>
         <div class="xaxis ${showRel ? "abs" : ""}">
           ${labels.map((l) => html`<span class="tick" style="left:${l.frac * 100}%">${l.text}</span>`)}
@@ -3857,8 +3863,10 @@ class EnergyFlowPriceCard extends LitElement {
       .scrub { margin-top: -8px; padding-left: 34px; }
       .scrub input[type="range"] { display: block; width: calc(100% + 14px); margin: 0 -7px; accent-color: var(--primary-color); height: 22px; cursor: pointer; }
       .scrub-now { cursor: pointer; border: none; background: rgba(127,127,127,.18); color: var(--primary-text-color); border-radius: 50%; width: 18px; height: 18px; padding: 0; font-size: 10px; line-height: 18px; margin-left: 6px; }
-      .cursor { position: absolute; top: 0; bottom: 0; width: 0; border-left: 1.5px solid var(--primary-text-color); opacity: .7; pointer-events: none; }
-      .cdot { position: absolute; width: 8px; height: 8px; border-radius: 50%; transform: translate(-50%, -50%); box-shadow: 0 0 0 2px var(--card-background-color, #1c1c1c); pointer-events: none; }
+      .cursor { position: absolute; top: 0; bottom: 0; width: 3px; margin-left: -1.5px; background: #fff; border-radius: 2px; pointer-events: none; z-index: 3;
+        box-shadow: 0 0 4px rgba(255,255,255,.95), 0 0 10px rgba(255,255,255,.6), 0 0 0 1px rgba(0,0,0,.35); }
+      .cdot { z-index: 4; }
+      .cdot { position: absolute; width: 10px; height: 10px; border-radius: 50%; transform: translate(-50%, -50%); box-shadow: 0 0 0 2px var(--card-background-color, #1c1c1c); pointer-events: none; }
       .empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 12px; color: var(--secondary-text-color); }
       .chdr .now.sel b { color: var(--primary-color); }
       .tab { cursor: pointer; border: 1px solid var(--divider-color); background: transparent; color: var(--secondary-text-color); border-radius: 999px; padding: 3px 12px; font-size: 12px; transition: all .2s; }
@@ -3919,8 +3927,8 @@ class EnergyFlowPriceCard extends LitElement {
 
 customElements.define("energy-flow-price-card", EnergyFlowPriceCard);
 
-window.__EFPC_VERSION = "1.24.0-fork";
-console.info("%c energy-flow-price-card %c v1.24.0-fork ", "background:#7dd3fc;color:#0a1420;font-weight:700", "background:#333;color:#fff");
+window.__EFPC_VERSION = "1.24.1-fork";
+console.info("%c energy-flow-price-card %c v1.24.1-fork ", "background:#7dd3fc;color:#0a1420;font-weight:700", "background:#333;color:#fff");
 
 window.customCards = window.customCards || [];
 window.customCards.push({
