@@ -509,9 +509,10 @@ class EnergyFlowPriceCard extends LitElement {
       const wires = this._wires || {};
       const now = Date.now();
       const offDelay = Math.max(0, (this._config?.flow_off_delay ?? 20)) * 1000;
-      const pending = Object.values(wires).some((w) => w.wasShown && now - w.lastActive < offDelay + 1000);
-      this.requestUpdate();
-      if (!pending) { clearInterval(this._flowTimer); this._flowTimer = null; }
+      const list = Object.values(wires);
+      const fading = list.some((w) => w.wasShown && now - w.lastActive > 900 && now - w.lastActive < offDelay + 1000);
+      if (fading) this.requestUpdate();
+      if (!list.some((w) => w.wasShown)) { clearInterval(this._flowTimer); this._flowTimer = null; }
     }, 1000);
   }
 
@@ -715,10 +716,14 @@ class EnergyFlowPriceCard extends LitElement {
     if (!list.length) return null;
     const idx = list.findIndex((x) => (d.energy && x.stat_consumption === d.energy) || (d.power && x.stat_rate === d.power));
     if (idx < 0) return null;
-    let cs;
-    try { cs = getComputedStyle(this); } catch (e) { return null; }
-    const v = (cs.getPropertyValue(`--graph-color-${(idx % 54) + 1}`) || "").trim();
-    return v || null;
+    const fetched = this._eprefs?.fetched;
+    if (!this._gcols || this._gcols.fetched !== fetched) {
+      let cs = null;
+      try { cs = getComputedStyle(this); } catch (e) { /* not attached yet */ }
+      if (!cs) return null;
+      this._gcols = { fetched, cols: Array.from({ length: 54 }, (_, k) => (cs.getPropertyValue(`--graph-color-${k + 1}`) || "").trim()) };
+    }
+    return this._gcols.cols[idx % 54] || null;
   }
 
   _devColors() {
@@ -1393,10 +1398,12 @@ class EnergyFlowPriceCard extends LitElement {
     }
 
     const neon = c.wire_style === "neon";
-    const liveStyle = (st, color) => {
-      const glow = neon && !reduceEffects ? `filter:drop-shadow(0 0 2px ${color}) drop-shadow(0 0 6px ${color});` : "";
-      return `stroke:${color};${glow}${st.moving ? "" : "animation-play-state:paused;"}`;
-    };
+    // No CSS filter here: drop-shadow on animated paths is recomputed every frame and made
+    // the animation stutter. The neon glow is an extra wide, translucent copy of the pulse.
+    const liveStyle = (st, color) => `stroke:${color};${st.moving ? "" : "animation-play-state:paused;"}`;
+    const livePath = (st, color, d) => svg`
+      ${neon && !reduceEffects ? svg`<path class="${liveClass(st)} glow" style="${liveStyle(st, color)}" data-speed="${st.duration}" d="${d}"></path>` : nothing}
+      <path class="${liveClass(st)}" style="${liveStyle(st, color)}" data-speed="${st.duration}" d="${d}"></path>`;
     const liveClass = (st) => `live ${neon ? "neon" : "dashed"}${st.fade === "in" ? " fade-in" : ""}${st.fade === "out" ? " fade-out" : ""}${st.moving ? "" : " still"}${st.dirSwap ? " dir-swap" : ""}`;
 
     // Dim base wire that fades in/out at both tips (measured along the bent path).
@@ -1514,10 +1521,10 @@ class EnergyFlowPriceCard extends LitElement {
           if (!pts) return nothing;
           const st = ws[k];
           return svg`${bases[k].path}
-            ${st.show && !noLive ? svg`<path class="${liveClass(st)}" style="${liveStyle(st, wireColor[k])}" data-speed="${st.duration}" d="${liveD(pts, st.reversed)}"></path>` : nothing}`;
+            ${st.show && !noLive ? livePath(st, wireColor[k], liveD(pts, st.reversed)) : nothing}`;
         })}
         ${rowWires.map((w, i) => svg`${rowBases[i].path}
-          ${w.st.show && !noLive ? svg`<path class="${liveClass(w.st)}" style="${liveStyle(w.st, w.color)}" data-speed="${w.st.duration}" d="${liveD(w.pts, false)}"></path>` : nothing}`)}
+          ${w.st.show && !noLive ? livePath(w.st, w.color, liveD(w.pts, false)) : nothing}`)}
       </svg>
       <div class="flow ${visual ? "visual" : ""} ${daily ? "tall" : ""}">
         ${P && (c.date_selection || "auto") !== "card" ? html`<div class="plabel"><ha-icon icon="mdi:calendar"></ha-icon>${P.label}</div>` : nothing}
@@ -1758,8 +1765,37 @@ class EnergyFlowPriceCard extends LitElement {
     }, secs * 1000);
   }
 
+  // Home Assistant hands every card a new `hass` object on ANY state change in the system.
+  // Only re-render when one of the entities this card actually uses has changed.
+  shouldUpdate(changed) {
+    if (!changed.has("hass") || changed.size > 1) return true;
+    const old = changed.get("hass");
+    if (!old || !this._config || !this.hass) return true;
+    if (old.language !== this.hass.language || old.themes !== this.hass.themes || old.locale !== this.hass.locale) return true;
+    const ids = this._watchIds();
+    for (const id of ids) if (old.states[id] !== this.hass.states[id]) return true;
+    return false;
+  }
+
+  _watchIds() {
+    if (this._watch && this._watch.cfg === this._config) return this._watch.ids;
+    const ids = new Set();
+    const walk = (v) => {
+      if (typeof v === "string") { if (/^[a-z_]+\.[a-z0-9_]+$/i.test(v)) ids.add(v); }
+      else if (Array.isArray(v)) v.forEach(walk);
+      else if (v && typeof v === "object") Object.values(v).forEach(walk);
+    };
+    walk(this._config);
+    this._watch = { cfg: this._config, ids: [...ids] };
+    return this._watch.ids;
+  }
+
   updated() {
-    this._measure();
+    // measure icon positions at most once per animation frame (layout reads are expensive)
+    if (!this._measureQueued) {
+      this._measureQueued = true;
+      requestAnimationFrame(() => { this._measureQueued = false; this._measure(); });
+    }
     // Restart the fade+slide animation whenever the shown car changes.
     const el = this.renderRoot?.querySelector?.(".caranim");
     if (el && el.dataset.k !== this._lastCarK) {
@@ -2969,6 +3005,8 @@ class EnergyFlowPriceCard extends LitElement {
       .live { stroke-width: 2.5; fill: none; stroke-linecap: round; stroke-linejoin: round; opacity: 1; transition: opacity 1s ease; }
       .live.dashed { stroke-dasharray: 5 9; animation-name: flow; animation-duration: 1s; animation-timing-function: linear; animation-iteration-count: infinite; }
       .live.dashed.still { stroke-dashoffset: 0; }
+      .live.neon.glow { stroke-width: 8; stroke-opacity: .28; stroke-linecap: round; }
+      .live { will-change: stroke-dashoffset; }
       .live.neon { stroke-width: 3; stroke-dasharray: 90 500; animation-name: neonsweep; animation-duration: 1s; animation-timing-function: linear; animation-iteration-count: infinite; }
       .live.neon.still { stroke-dashoffset: 0; }
       @keyframes neonsweep { to { stroke-dashoffset: -590; } }
@@ -3140,8 +3178,8 @@ class EnergyFlowPriceCard extends LitElement {
 
 customElements.define("energy-flow-price-card", EnergyFlowPriceCard);
 
-window.__EFPC_VERSION = "1.30.0-fork";
-console.info("%c energy-flow-price-card %c v1.30.0-fork ", "background:#7dd3fc;color:#0a1420;font-weight:700", "background:#333;color:#fff");
+window.__EFPC_VERSION = "1.30.1-fork";
+console.info("%c energy-flow-price-card %c v1.30.1-fork ", "background:#7dd3fc;color:#0a1420;font-weight:700", "background:#333;color:#fff");
 
 window.customCards = window.customCards || [];
 window.customCards.push({

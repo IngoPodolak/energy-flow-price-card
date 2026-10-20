@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.30.1-fork
+
+- Performance: Neon-Leuchten ohne CSS-Filter (flüssige Animation), Neuzeichnen nur bei Änderung der verwendeten Entitäten, kein sekündliches Neuzeichnen mehr bei aktiven Linien, Theme-Farben und Positionsmessung zwischengespeichert.
+
 ## v1.30.0-fork
 
 - Gerätefarben wie im HA-Energie-Dashboard (`--graph-color-N` nach Position in der Geräteliste), Geräte ohne Eintrag dort erhalten automatisch kontrastreiche Farben; `device_colors: energy | auto`.
