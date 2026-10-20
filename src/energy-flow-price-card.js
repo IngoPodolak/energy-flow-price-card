@@ -92,6 +92,16 @@ function toMediaSource(u) {
 function polyD(pts) {
   return pts.map((p, i) => `${i ? "L" : "M"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
 }
+function addDays(ts, n) {
+  const d = new Date(ts);
+  d.setDate(d.getDate() + n);
+  return d.getTime();
+}
+function startOfDay(ts) {
+  const d = new Date(ts);
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+}
 function startOfToday() {
   const d = new Date();
   d.setHours(0, 0, 0, 0);
@@ -199,6 +209,27 @@ function priceScale(vals, auto, roomTop) {
   for (let v = hi; v >= lo - step / 2; v -= step) ticks.push(Math.abs(v) < step / 1000 ? 0 : v);
   const dec = step >= 0.1 ? (step >= 1 ? 0 : (step * 10) % 1 === 0 ? 1 : 2) : step >= 0.01 ? 2 : 3;
   return { lo, hi, ticks, dec: Math.max(dec, 2), fr: (v) => (v - lo) / (hi - lo) };
+}
+
+// kWh and € of a list of power samples ({t, dur, v in W}) between a and b, priced with the
+// price valid at each sample's midpoint
+function costCalc(samples, priceList, a0, b0) {
+  const prices = priceList.filter((x) => x && !isNaN(x.t) && x.v != null && !isNaN(x.v)).sort((x, y) => x.t - y.t);
+  const priceAt = (t) => {
+    let lo = 0, hi = prices.length - 1, best = null;
+    while (lo <= hi) { const m = (lo + hi) >> 1; if (prices[m].t <= t) { best = prices[m]; lo = m + 1; } else hi = m - 1; }
+    return best ? best.v : null;
+  };
+  let kwh = 0, eur = 0, priced = false;
+  for (const p of samples) {
+    const a = Math.max(p.t, a0), b = Math.min(p.t + p.dur, b0);
+    if (b <= a || !p.v) continue;
+    const e = (p.v * (b - a)) / 3600000 / 1000;
+    kwh += e;
+    const pr = prices.length ? priceAt(a + (b - a) / 2) : null;
+    if (pr != null) { eur += e * pr; priced = true; }
+  }
+  return { kwh, eur: priced ? eur : null };
 }
 
 // Reduce a dense history series to at most ~n points (bucket averages).
@@ -558,11 +589,80 @@ class EnergyFlowPriceCard extends LitElement {
     return html`
       <ha-card>
         <div class="stack">
+          ${this._config.date_selection === "card" ? this._renderDateBar() : nothing}
           ${this._config.show_flow ? this._renderFlow() : nothing}
           ${this._config.show_price ? this._renderPrice() : nothing}
         </div>
       </ha-card>
     `;
+  }
+
+  // Own date bar: kind (day/week/month/year/range), ‹ label ›, calendar, "today".
+  _ownRange(kind, anchor) {
+    const d = new Date(startOfDay(anchor));
+    if (kind === "week") { const wd = (d.getDay() + 6) % 7; d.setDate(d.getDate() - wd); return { start: d.getTime(), end: addDays(d.getTime(), 7) }; }
+    if (kind === "month") { d.setDate(1); const e = new Date(d); e.setMonth(e.getMonth() + 1); return { start: d.getTime(), end: e.getTime() }; }
+    if (kind === "year") { d.setMonth(0, 1); const e = new Date(d); e.setFullYear(e.getFullYear() + 1); return { start: d.getTime(), end: e.getTime() }; }
+    return { start: d.getTime(), end: addDays(d.getTime(), 1) };
+  }
+  _ownSet(kind, start, end) {
+    this._ownKind = kind;
+    const today = startOfToday();
+    if (kind === "day" && start === today) this._own = null;
+    else this._own = { kind, start, end };
+    this._cursor = null;
+    this.requestUpdate();
+  }
+  _ownShift(dir) {
+    const kind = this._ownKind || "day";
+    const cur = this._own || this._ownRange(kind, Date.now());
+    if (kind === "range") {
+      const len = cur.end - cur.start;
+      return this._ownSet("range", cur.start + dir * len, cur.end + dir * len);
+    }
+    const a = new Date(cur.start);
+    if (kind === "day") a.setDate(a.getDate() + dir);
+    else if (kind === "week") a.setDate(a.getDate() + 7 * dir);
+    else if (kind === "month") a.setMonth(a.getMonth() + dir);
+    else a.setFullYear(a.getFullYear() + dir);
+    const r = this._ownRange(kind, a.getTime());
+    this._ownSet(kind, r.start, r.end);
+  }
+  _renderDateBar() {
+    const T = (k) => this._t(k);
+    const kind = this._ownKind || "day";
+    const cur = this._own || this._ownRange(kind, Date.now());
+    const label = this._periodLabel(cur.start, cur.end);
+    const isNow = cur.start <= Date.now() && Date.now() < cur.end;
+    const iso = (ts) => { const d = new Date(ts); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
+    const parse = (v) => { const [y, m, dd] = v.split("-").map(Number); return new Date(y, m - 1, dd).getTime(); };
+    const pick = (e) => {
+      if (!e.target.value) return;
+      const r = this._ownRange(kind === "range" ? "day" : kind, parse(e.target.value));
+      this._ownSet(kind === "range" ? "day" : kind, r.start, r.end);
+    };
+    return html`
+      <div class="datebar">
+        <select class="dkind" @change=${(e) => {
+          const k = e.target.value;
+          if (k === "range") { const r = this._own || this._ownRange("day", Date.now()); this._ownSet("range", r.start, r.end); return; }
+          const r = this._ownRange(k, this._own ? this._own.start : Date.now()); this._ownSet(k, r.start, r.end);
+        }}>
+          ${["day", "week", "month", "year", "range"].map((k) => html`<option value=${k} ?selected=${k === kind}>${T("dsel_" + k)}</option>`)}
+        </select>
+        <button class="dnav" @click=${() => this._ownShift(-1)}>‹</button>
+        ${kind === "range" ? html`
+          <input class="ddate" type="date" .value=${iso(cur.start)} max=${iso(cur.end - 1)} @change=${(e) => e.target.value && this._ownSet("range", parse(e.target.value), Math.max(parse(e.target.value) + 86400000, cur.end))} />
+          <span class="dsep">–</span>
+          <input class="ddate" type="date" .value=${iso(cur.end - 1)} min=${iso(cur.start)} @change=${(e) => e.target.value && this._ownSet("range", cur.start, addDays(parse(e.target.value), 1))} />`
+        : html`
+          <label class="dlabel"><ha-icon icon="mdi:calendar"></ha-icon><span>${label}</span>
+            <input class="dhidden" type="date" .value=${iso(cur.start)} @change=${pick}
+              @click=${(e) => { try { e.target.showPicker && e.target.showPicker(); } catch (x) { /* ignore */ } }} />
+          </label>`}
+        <button class="dnav" ?disabled=${isNow} @click=${() => this._ownShift(1)}>›</button>
+        ${this._own ? html`<button class="dtoday" @click=${() => { this._own = null; this._ownKind = "day"; this._cursor = null; this.requestUpdate(); }}>${T("today")}</button>` : nothing}
+      </div>`;
   }
 
   // ---------------------------------------------------------------------------
@@ -623,6 +723,162 @@ class EnergyFlowPriceCard extends LitElement {
         .catch(() => { this._media[id] = { ...(this._media[id] || {}), busy: false, error: true }; this.requestUpdate(); });
     }
     return m?.url || null;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Selected period (date picker). Returns null for "today" (normal live behaviour),
+  // otherwise { start, end, live, label }. Source: the card's own date bar, or the
+  // Home Assistant "energy date selection" card on the same dashboard.
+  // ---------------------------------------------------------------------------
+  _period() {
+    const c = this._config;
+    const mode = c.date_selection || "auto";
+    let start, end;
+    if (mode === "card") {
+      if (!this._own) return null;
+      ({ start, end } = this._own);
+    } else if (mode === "auto" || mode === "energy") {
+      const coll = this.hass?.connection?.[`_${c.energy_collection_key || "energy"}`];
+      if (!coll) return null;
+      if (!this._eUnsub && typeof coll.subscribe === "function") {
+        try { this._eUnsub = coll.subscribe(() => this.requestUpdate()); } catch (e) { this._eUnsub = () => {}; }
+      }
+      if (!coll.start) return null;
+      start = +coll.start;
+      end = coll.end ? +coll.end : null;
+    } else return null;
+    // HA ends a day at 23:59:59.999 -> make the end exclusive at midnight
+    if (end != null) {
+      const e2 = new Date(end + 1);
+      if (e2.getHours() === 0 && e2.getMinutes() === 0 && e2.getSeconds() === 0 && e2.getMilliseconds() === 0) end += 1;
+    }
+    const t0 = startOfToday();
+    if (start === t0 && (end == null || end === addDays(t0, 1))) return null;
+    if (end == null) end = Math.max(addDays(startOfDay(start), 1), Date.now());
+    const now = Date.now();
+    return { start, end, live: start <= now && now < end, label: this._periodLabel(start, end) };
+  }
+
+  _periodLabel(start, end) {
+    const lang = resolveLang(this._config.language, this.hass);
+    const s = new Date(start), e = new Date(end - 1);
+    const days = Math.round((startOfDay(end) - startOfDay(start)) / 86400000);
+    if (days <= 1) return s.toLocaleDateString(lang, { weekday: "short", day: "numeric", month: "short" });
+    if (s.getDate() === 1 && new Date(end).getDate() === 1) {
+      if (s.getMonth() === 0 && days >= 365) return String(s.getFullYear());
+      if (days <= 31) return s.toLocaleDateString(lang, { month: "long", year: "numeric" });
+    }
+    const sameYear = s.getFullYear() === e.getFullYear();
+    return `${s.toLocaleDateString(lang, { day: "numeric", month: "short", ...(sameYear ? {} : { year: "numeric" }) })} – ${e.toLocaleDateString(lang, { day: "numeric", month: "short", year: "numeric" })}`;
+  }
+
+  // Energy, energy-meter changes and costs for the selected period (recorder statistics).
+  async _ensurePeriod(P) {
+    const c = this._config;
+    if (!this.hass?.callWS) return;
+    const devs = this._devices();
+    const uniq = (a) => [...new Set(a.filter(Boolean))];
+    const powers = uniq([c.solar_power, ...this._src("grid").entities, ...this._src("battery").entities, ...devs.map((d) => d.power)]);
+    const energies = uniq([c.energy_solar, ...this._energySrc("grid").entities, ...this._energySrc("battery").entities, ...devs.map((d) => d.energy)]);
+    const key = `${P.start}|${P.end}|${powers.join(",")}|${energies.join(",")}|${c.price_entity || ""}|${c.price_use_tibber_service ? 1 : 0}`;
+    const now = Date.now();
+    const old = this._pd;
+    if (old && old.key === key && (old.busy || old.final || now - old.fetched < 120000)) return;
+    this._pd = { ...(old && old.key === key ? old : { ps: P.start, pe: P.end }), key, busy: true, fetched: now };
+    const end = Math.min(P.end, now);
+    const span = Math.max(0, end - P.start);
+    const period = span <= 8 * 86400000 ? "5minute" : span <= 62 * 86400000 ? "hour" : "day";
+    const step = { "5minute": 300000, hour: 3600000, day: 86400000 }[period];
+    const sIso = new Date(P.start).toISOString(), eIso = new Date(end).toISOString();
+    const rows = {};
+    if (powers.length && span > 0) {
+      try {
+        const r = await this.hass.callWS({ type: "recorder/statistics_during_period", start_time: sIso, end_time: eIso, statistic_ids: powers, period, types: ["mean"] });
+        for (const id of powers) {
+          const arr = r?.[id];
+          if (!Array.isArray(arr) || !arr.length) continue;
+          const f = unitFactor(this.hass.states[id]?.attributes?.unit_of_measurement);
+          rows[id] = arr.map((x) => ({ t: typeof x.start === "number" ? x.start : Date.parse(x.start), dur: step, v: (x.mean || 0) * f }))
+            .filter((x) => !isNaN(x.t));
+        }
+      } catch (e) { /* fall back below */ }
+      const missing = powers.filter((id) => !rows[id]);
+      if (missing.length && span <= 3 * 86400000) {
+        try {
+          const res = await this.hass.callApi("GET", `history/period/${sIso}?filter_entity_id=${missing.join(",")}&end_time=${encodeURIComponent(eIso)}&minimal_response&no_attributes`);
+          for (const arr of Array.isArray(res) ? res : []) {
+            if (!Array.isArray(arr) || !arr.length) continue;
+            const id = arr[0].entity_id;
+            const f = unitFactor(this.hass.states[id]?.attributes?.unit_of_measurement);
+            const pts = arr.map((x) => ({ t: Math.max(P.start, Date.parse(x.last_changed || x.last_updated)), v: (parseFloat(x.state) || 0) * f }));
+            rows[id] = pts.map((p2, i) => ({ ...p2, dur: (i + 1 < pts.length ? pts[i + 1].t : end) - p2.t }));
+          }
+        } catch (e) { /* no data */ }
+      }
+    }
+    const integ = {};
+    for (const [id, arr] of Object.entries(rows)) {
+      let pos = 0, neg = 0;
+      for (const x of arr) {
+        const a = Math.max(x.t, P.start), b = Math.min(x.t + x.dur, end);
+        if (b <= a) continue;
+        const e = (x.v * (b - a)) / 3600000 / 1000;
+        if (e > 0) pos += e; else neg -= e;
+      }
+      integ[id] = { pos, neg };
+    }
+    const stats = {};
+    for (const id of energies) {
+      try {
+        const r = await this.hass.callWS({
+          type: "recorder/statistic_during_period", statistic_id: id,
+          fixed_period: { start_time: sIso, end_time: eIso }, types: ["change"], units: { energy: "kWh" },
+        });
+        if (r && typeof r.change === "number") stats[id] = r.change;
+      } catch (e) { /* no statistics */ }
+    }
+    let priceHist = [];
+    if (c.price_entity && !c.price_use_tibber_service && span <= 93 * 86400000) {
+      try {
+        const res = await this.hass.callApi("GET", `history/period/${new Date(P.start - 3600000).toISOString()}?filter_entity_id=${c.price_entity}&end_time=${encodeURIComponent(eIso)}&minimal_response&no_attributes`);
+        const arr = Array.isArray(res) && res[0] ? res[0] : [];
+        priceHist = arr.map((x) => ({ t: Date.parse(x.last_changed || x.last_updated), v: normalizePrice(parseFloat(x.state)) }))
+          .filter((x) => !isNaN(x.v) && !isNaN(x.t));
+      } catch (e) { /* no price history */ }
+    } else if (c.price_use_tibber_service && span <= 93 * 86400000) {
+      priceHist = await this._tibberRange(P.start, end);
+    }
+    this._pd = { key, ps: P.start, pe: P.end, busy: false, fetched: Date.now(), final: P.end <= now, rows, integ, stats, priceHist };
+    this.requestUpdate();
+  }
+
+  _pdFor(P) {
+    const d = this._pd;
+    return d && d.ps === P.start && d.pe === P.end ? d : null;
+  }
+
+  async _tibberRange(start, end) {
+    try {
+      const res = await this.hass.connection.sendMessagePromise({
+        type: "call_service", domain: "tibber", service: "get_prices", return_response: true,
+        service_data: { start: new Date(start).toISOString(), end: new Date(end).toISOString() },
+      });
+      const data = Object.values(res?.response?.prices || {})[0] || [];
+      return data.map((x) => ({ t: Date.parse(x.start_time ?? x.from), v: normalizePrice(+(x.price ?? x.total)) }))
+        .filter((x) => !isNaN(x.t) && !isNaN(x.v)).sort((a, b) => a.t - b.t);
+    } catch (e) { return []; }
+  }
+
+  // costs of the grid import in the selected period
+  _periodCost(P, pricePoints) {
+    const d = this._pdFor(P);
+    if (!d || !d.rows) return null;
+    const gs = this._src("grid");
+    let samples = gs.dual
+      ? (d.rows[gs.pos] || []).map((x) => ({ ...x, v: Math.max(0, Math.abs(x.v)) }))
+      : (d.rows[gs.signed] || []).map((x) => ({ ...x, v: Math.max(0, x.v * gs.sign) }));
+    if (!samples.length) return null;
+    return costCalc(samples, [...(d.priceHist || []), ...(pricePoints || [])], P.start, Math.min(P.end, Date.now()));
   }
 
   // ---------------------------------------------------------------------------
@@ -724,14 +980,24 @@ class EnergyFlowPriceCard extends LitElement {
   _daily(devs) {
     const c = this._config;
     if (c.show_daily_energy === false) return null;
-    this._ensureDayEnergy();
-    const I = (e) => (e ? this._dayIntegral(e) : null);
+    const P = this._period();
+    let I, st;
+    if (P) {
+      this._ensurePeriod(P);
+      const pd = this._pdFor(P);
+      I = (e) => (e && pd?.integ?.[e]) || null;
+      st = (e) => (pd?.stats?.[e] ?? null);
+    } else {
+      this._ensureDayEnergy();
+      I = (e) => (e ? this._dayIntegral(e) : null);
+      st = (e) => this._dayStats?.[e]?.v ?? null;
+    }
     const pick = (energyEnt, integ, field) => {
-      if (energyEnt) return this._dayStats?.[energyEnt]?.v ?? null;
+      if (energyEnt) return st(energyEnt);
       return integ ? integ[field] : null;
     };
-    const gd = this._srcDay("grid", I);
-    const bd = this._srcDay("battery", I);
+    const gd = this._srcDay("grid", I, st);
+    const bd = this._srcDay("battery", I, st);
     const r = {
       solar: pick(c.energy_solar, I(c.solar_power), "pos"),
       gridIn: gd.in,
@@ -764,8 +1030,7 @@ class EnergyFlowPriceCard extends LitElement {
   }
 
   // { in, out } kWh today for grid/battery (in = towards the house).
-  _srcDay(kind, I) {
-    const st = (e) => this._dayStats?.[e]?.v ?? null;
+  _srcDay(kind, I, st) {
     const es = this._energySrc(kind);
     if (es.entities.length) {
       if (!es.dual) {
@@ -872,7 +1137,9 @@ class EnergyFlowPriceCard extends LitElement {
   _renderFlow() {
     const c = this._config;
     const hass = this.hass;
-    const v = this._liveV();
+    const P = this._period();
+    const noLive = !!(P && !P.live);   // a past period: no current values, no animation
+    const v = noLive ? { solar: null, grid: null, charge: null, discharge: null, soc: null } : this._liveV();
     const home = this._homePower(v);
 
     const thr = this._thr();
@@ -895,8 +1162,8 @@ class EnergyFlowPriceCard extends LitElement {
     const daily = this._daily(devs);
     const guests = [];
     const items = devs.map((d, i) => {
-      const p = pw(hass, d.power);
-      const soc = d.type === "car" ? num(hass, d.soc) : null;
+      const p = noLive ? null : pw(hass, d.power);
+      const soc = d.type === "car" && !noLive ? num(hass, d.soc) : null;
       // per-device threshold (falls back to the global "hide line below" value)
       const dThr = d.min_power !== undefined && d.min_power !== "" && !isNaN(parseFloat(d.min_power)) ? Math.max(0, parseFloat(d.min_power)) : thr;
       const powerActive = p !== null && Math.abs(p) > dThr;
@@ -927,8 +1194,10 @@ class EnergyFlowPriceCard extends LitElement {
     const rowMode = devMode === "row" && allDevs.length > 1;
     const rowDevs = rowMode
       ? allDevs
-          .map((d, idx) => ({ ...d, idx, ws: this._wireState("dev:" + idx, d.active ? d.power : 0, true, d.thr ?? thr) }))
-          .filter((d) => d.showMode === "always" || (d.showMode === "active" ? d.ws.show : (c.display_zero || d.ws.show)))
+          .map((d, idx) => ({ ...d, idx, past: noLive, ws: this._wireState("dev:" + idx, d.active ? d.power : 0, true, d.thr ?? thr) }))
+          .filter((d) => noLive
+            ? (d.showMode === "always" || c.display_zero || (d.day != null && d.day > 0.005))
+            : (d.showMode === "always" || (d.showMode === "active" ? d.ws.show : (c.display_zero || d.ws.show))))
       : [];
     const devsShown = allDevs.length ? allDevs : [{ name: this._t("devices"), power: null, soc: null, active: false, hasEnt: false, icon: "mdi:power-plug", isCar: false, day: null }];
 
@@ -1083,7 +1352,7 @@ class EnergyFlowPriceCard extends LitElement {
     };
     const dayIn = (x, k) => dayLine(k, "in", x);
     const dayOut = (x, k, icon) => dayLine(k, "out", x, icon ? [icon, INTO_NODE] : null);
-    const fcToday = c.solar_forecast !== false && c.solar_forecast_node !== false ? this._forecastToday() : null;
+    const fcToday = !P && c.solar_forecast !== false && c.solar_forecast_node !== false ? this._forecastToday() : null;
     const fcLine = fcToday != null
       ? html`<span class="day fc" title=${this._t("forecast_today")}><span class="dic"><ha-icon icon="mdi:weather-partly-cloudy"></ha-icon></span>${fmtKWh(fcToday)} kWh</span>` : nothing;
     // today's electricity costs (grid import × price) under the house, same calculation as in the price chart
@@ -1091,9 +1360,9 @@ class EnergyFlowPriceCard extends LitElement {
     if (c.home_show_costs !== false && c.price_show_costs !== false && this._src("grid").entities.length && (c.price_entity || c.price_use_tibber_service)) {
       this._ensureCostData();
       if (c.price_use_tibber_service) this._ensureTibberPrices();
-      const r = this._costFor(startOfToday(), this._priceData().points);
+      const r = P ? this._periodCost(P, this._priceData().points) : this._costFor(startOfToday(), this._priceData().points);
       if (r && r.eur != null) {
-        homeCostLine = html`<span class="day cost" title=${this._t("cost_today")}><span class="dic"><ha-icon icon="mdi:cash"></ha-icon></span>${r.eur.toFixed(2).replace(".", ",")} €</span>`;
+        homeCostLine = html`<span class="day cost" title=${P ? `${this._t("costs")} ${P.label}` : this._t("cost_today")}><span class="dic"><ha-icon icon="mdi:cash"></ha-icon></span>${r.eur.toFixed(2).replace(".", ",")} €</span>`;
       }
     }
     const homeDayLine = daily && daily.home != null
@@ -1136,7 +1405,7 @@ class EnergyFlowPriceCard extends LitElement {
     const wrapStyle = `--efp-day-in:${c.color_day_in || "#34d399"};--efp-day-out:${c.color_day_out || "#fb923c"};--efp-day-home:${c.color_home}`;
 
     return html`
-      <div class="flowwrap" style="${wrapStyle}">
+      <div class="flowwrap ${noLive ? "past" : ""}" style="${wrapStyle}">
       <svg class="wires" viewBox="0 0 ${W || 1} ${HW}" preserveAspectRatio="none">
         <defs>${wireKeys.map((k) => bases[k].defs)}${rowBases.map((b) => b.defs)}</defs>
         ${wireKeys.map((k) => {
@@ -1144,12 +1413,13 @@ class EnergyFlowPriceCard extends LitElement {
           if (!pts) return nothing;
           const st = ws[k];
           return svg`${bases[k].path}
-            ${st.show ? svg`<path class="${liveClass(st)}" style="${liveStyle(st, wireColor[k])}" data-speed="${st.duration}" d="${liveD(pts, st.reversed)}"></path>` : nothing}`;
+            ${st.show && !noLive ? svg`<path class="${liveClass(st)}" style="${liveStyle(st, wireColor[k])}" data-speed="${st.duration}" d="${liveD(pts, st.reversed)}"></path>` : nothing}`;
         })}
         ${rowWires.map((w, i) => svg`${rowBases[i].path}
-          ${w.st.show ? svg`<path class="${liveClass(w.st)}" style="${liveStyle(w.st, w.color)}" data-speed="${w.st.duration}" d="${liveD(w.pts, false)}"></path>` : nothing}`)}
+          ${w.st.show && !noLive ? svg`<path class="${liveClass(w.st)}" style="${liveStyle(w.st, w.color)}" data-speed="${w.st.duration}" d="${liveD(w.pts, false)}"></path>` : nothing}`)}
       </svg>
       <div class="flow ${visual ? "visual" : ""} ${daily ? "tall" : ""}">
+        ${P && (c.date_selection || "auto") !== "card" ? html`<div class="plabel"><ha-icon icon="mdi:calendar"></ha-icon>${P.label}</div>` : nothing}
         ${visual ? html`<img class="housepic" data-anc="pic" src="${this._houseImage()}" alt="" style="height:${picScale}%;${picAlign}" @load=${() => this._measure(true)} />` : nothing}
 
         ${node("solar", !solarHasEnt, html`
@@ -1220,7 +1490,7 @@ class EnergyFlowPriceCard extends LitElement {
     const ring = c.car_ring !== false && d.isCar && d.soc != null;
     const r = 18, circ = 2 * Math.PI * r;
     const pct = d.soc == null ? 0 : Math.max(0, Math.min(100, d.soc)) / 100;
-    return html`<div class="devitem ${d.active ? "" : "idle"}"
+    return html`<div class="devitem ${d.active || d.past ? "" : "idle"}"
       @pointerdown=${ev.down} @pointerup=${ev.up} @pointermove=${ev.move}
       @pointerleave=${ev.cancel} @pointercancel=${ev.cancel} @contextmenu=${(e) => e.preventDefault()}>
       ${ring
@@ -1336,6 +1606,7 @@ class EnergyFlowPriceCard extends LitElement {
     if (this._flowTimer) { clearInterval(this._flowTimer); this._flowTimer = null; }
     if (this._chartTimer) { clearInterval(this._chartTimer); this._chartTimer = null; }
     if (this._ro) { this._ro.disconnect(); this._ro = null; this._roTarget = null; }
+    if (this._eUnsub) { try { this._eUnsub(); } catch (e) { /* ignore */ } this._eUnsub = null; }
     clearTimeout(this._holdTimer);
   }
 
@@ -1420,6 +1691,8 @@ class EnergyFlowPriceCard extends LitElement {
       const cur = this._priceHours ?? Math.max(8, Math.min(48, c.price_hours || 24));
       ranges = html`<div class="ranges">${PRICE_RANGES.map((h) => html`
         <button class="rng ${h === cur ? "on" : ""}" @click=${() => { this._priceHours = h; this._selectedSlot = null; this._tapLock = false; this._pauseAutoScroll(); this.requestUpdate(); }}>${h}h</button>`)}</div>`;
+    } else if (this._period()) {
+      ranges = html`<div class="ranges"><span class="rng on period"><ha-icon icon="mdi:calendar"></ha-icon>${this._period().label}</span></div>`;
     } else {
       const cur = this._histRange ?? c.history_range ?? "today";
       ranges = html`<div class="ranges">${HISTORY_RANGES.map((r) => html`
@@ -1565,11 +1838,13 @@ class EnergyFlowPriceCard extends LitElement {
       } catch (e) { /* no data */ }
     }
     let priceHist = [];
-    if (c.price_entity && !c.price_use_tibber_service) {
+    if (c.price_use_tibber_service) {
+      priceHist = await this._tibberRange(y0, now);
+    } else if (c.price_entity) {
       try {
-        const res = await this.hass.callApi("GET", `history/period/${startIso}?filter_entity_id=${c.price_entity}&end_time=${encodeURIComponent(endIso)}&minimal_response&no_attributes`);
+        const res = await this.hass.callApi("GET", `history/period/${new Date(y0 - 3600000).toISOString()}?filter_entity_id=${c.price_entity}&end_time=${encodeURIComponent(endIso)}&minimal_response&no_attributes`);
         const arr = Array.isArray(res) && res[0] ? res[0] : [];
-        priceHist = arr.map((x) => ({ t: Math.max(y0, Date.parse(x.last_changed || x.last_updated)), v: normalizePrice(parseFloat(x.state)) }))
+        priceHist = arr.map((x) => ({ t: Date.parse(x.last_changed || x.last_updated), v: normalizePrice(parseFloat(x.state)) }))
           .filter((p) => !isNaN(p.v) && !isNaN(p.t));
       } catch (e) { /* no price history */ }
     }
@@ -1588,24 +1863,7 @@ class EnergyFlowPriceCard extends LitElement {
     else samples = (d.grid[gs.signed] || []).map((p) => ({ ...p, v: Math.max(0, p.v * gs.sign) }));
     if (!samples.length) return null;
     // price lookup: provider list wins where it has data, history of the entity fills the rest
-    const prices = [...(d.priceHist || []), ...(pricePoints || [])].sort((a, b) => a.t - b.t);
-    if (!prices.length) return null;
-    const priceAt = (t) => {
-      let lo = 0, hi = prices.length - 1, best = null;
-      while (lo <= hi) { const m = (lo + hi) >> 1; if (prices[m].t <= t) { best = prices[m]; lo = m + 1; } else hi = m - 1; }
-      return best ? best.v : null;
-    };
-    const dayEnd = Math.min(dayStart + 86400000, Date.now());
-    let kwh = 0, eur = 0, priced = false;
-    for (const p of samples) {
-      const a = Math.max(p.t, dayStart), b = Math.min(p.t + p.dur, dayEnd);
-      if (b <= a || !p.v) continue;
-      const e = (p.v * (b - a)) / 3600000 / 1000;
-      const pr = priceAt(a + (b - a) / 2);
-      kwh += e;
-      if (pr != null) { eur += e * pr; priced = true; }
-    }
-    return priced ? { kwh, eur } : { kwh, eur: null };
+    return costCalc(samples, [...(d.priceHist || []), ...(pricePoints || [])], dayStart, Math.min(addDays(dayStart, 1), Date.now()));
   }
 
   _rangeSpec() {
@@ -1624,9 +1882,10 @@ class EnergyFlowPriceCard extends LitElement {
     if (!entities.length || !this.hass) return { byEntity: {}, loaded: true };
     this._hcache = this._hcache || {};
     const key = entities.join(",") + "|" + spec.id;
+    const final = spec.past;
     const cached = this._hcache[key];
     const maxAge = spec.hours > 24 ? 600000 : 60000;
-    if (!cached || (!cached.busy && Date.now() - cached.fetched > maxAge)) {
+    if (!cached || (!cached.busy && !(final && cached.loaded) && Date.now() - cached.fetched > maxAge)) {
       this._hcache[key] = { ...(cached || { byEntity: {} }), busy: true, fetched: Date.now() };
       this._fetchSeries(entities, spec).then((res) => {
         this._hcache[key] = { ...res, busy: false, fetched: Date.now(), loaded: true };
@@ -1686,6 +1945,11 @@ class EnergyFlowPriceCard extends LitElement {
 
   _historyChart(c, mode) {
     let spec = this._rangeSpec();
+    const P = this._period();
+    if (P) {
+      const end = Math.min(P.end, Date.now());
+      spec = { id: `p${P.start}-${P.end}`, start: P.start, end: P.live ? end : P.end, now: end, hours: (end - P.start) / 3600000, past: !P.live, label: P.label };
+    }
     const T = (k) => this._t(k);
     const live = (e) => pw(this.hass, e);
     let series = [];
@@ -1705,7 +1969,7 @@ class EnergyFlowPriceCard extends LitElement {
         series.push({
           name: T("forecast"), color: c.color_solar, forecast: true,
           points: fc.map((p) => ({ t: p.t + half, v: p.v })).filter((p) => p.t >= spec.start - half * 2 && p.t <= spec.end + half * 2),
-          legendNow: total != null ? `${T("forecast_today")} ${fmtKWh(total)} kWh` : null,
+          legendNow: total != null && spec.id === "today" ? `${T("forecast_today")} ${fmtKWh(total)} kWh` : null,
         });
       }
     } else if (mode === "grid") {
@@ -1769,7 +2033,7 @@ class EnergyFlowPriceCard extends LitElement {
       if (s.forecast) return { ...s, pts: (s.points || []).slice() };
       const pts = (s.points || []).filter((p) => p.t <= nowMs);
       if (pts.length) {
-        const lastV = s.live != null && !isNaN(s.live) ? s.live : pts[pts.length - 1].v;
+        const lastV = !spec.past && s.live != null && !isNaN(s.live) ? s.live : pts[pts.length - 1].v;
         pts.push({ t: nowMs, v: lastV });
       }
       return { ...s, pts };
@@ -1847,7 +2111,7 @@ class EnergyFlowPriceCard extends LitElement {
       return last;
     };
     const timeTxt = tCur == null
-      ? this._t("now")
+      ? (spec.past ? spec.label : this._t("now"))
       : new Date(tCur).toLocaleString(lang, span > 86400000
         ? { weekday: "short", hour: "2-digit", minute: "2-digit" }
         : { hour: "2-digit", minute: "2-digit" });
@@ -1862,7 +2126,7 @@ class EnergyFlowPriceCard extends LitElement {
       <div class="usage-legend">
         ${S.map((s) => {
           const v = tCur == null
-            ? (s.forecast ? valueAt(s.pts, nowMs, true) : (s.live ?? (s.pts.length ? s.pts[s.pts.length - 1].v : null)))
+            ? (s.forecast ? valueAt(s.pts, nowMs, true) : ((spec.past ? null : s.live) ?? (s.pts.length ? s.pts[s.pts.length - 1].v : null)))
             : valueAt(s.pts, tCur, !!s.forecast);
           const lbl = s.label && v != null ? s.label(v) : s.name;
           if (s.forecast && tCur == null && s.legendNow) {
@@ -1908,7 +2172,7 @@ class EnergyFlowPriceCard extends LitElement {
                 })}
               </svg>`
             : html`<div class="empty">${error ? this._t("history_none") : loading ? this._t("history_loading") : this._t("history_none")}</div>`}
-          <div class="nowline ${nowFrac > 0.85 ? "right" : ""}" data-now="${this._t("now")}" style="left:${nowFrac * 100}%"></div>
+          ${spec.past ? nothing : html`<div class="nowline ${nowFrac > 0.85 ? "right" : ""}" data-now="${this._t("now")}" style="left:${nowFrac * 100}%"></div>`}
           ${tCur != null ? html`
             <div class="cursor" style="left:${cur * 100}%"></div>
             ${SV.map((s) => {
@@ -2070,7 +2334,12 @@ class EnergyFlowPriceCard extends LitElement {
 
     // Costs of today's (and for windows over 24 h also yesterday's) grid import.
     let costChips = nothing;
-    if (c.price_show_costs !== false && this._src("grid").entities.length) {
+    const P = this._period();
+    if (P && c.price_show_costs !== false && this._src("grid").entities.length) {
+      this._ensurePeriod(P);
+      const r = this._periodCost(P, allPoints);
+      if (r) costChips = html`<span class="now cost"><ha-icon icon="mdi:cash"></ha-icon>${P.label}: <b>${r.eur != null ? r.eur.toFixed(2).replace(".", ",") + " €" : "–"}</b><small>${fmtKWh(r.kwh)} kWh</small></span>`;
+    } else if (c.price_show_costs !== false && this._src("grid").entities.length) {
       this._ensureCostData();
       const today = startOfToday();
       const days = hours > 24 ? [today - 86400000, today] : [today];
@@ -2271,6 +2540,21 @@ class EnergyFlowPriceCard extends LitElement {
       ha-card { padding: 12px; }
       .stack { display: flex; flex-direction: column; gap: 12px; }
       .flowwrap { position: relative; }
+      .flowwrap.past .val, .flowwrap.past .sub { display: none; }
+      .plabel { position: absolute; top: -2px; left: 50%; transform: translateX(-50%); z-index: 4; display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 600;
+        color: var(--primary-color); background: var(--card-background-color, #1c1c1c); border: 1px solid var(--primary-color); border-radius: 999px; padding: 1px 8px; white-space: nowrap; }
+      .plabel ha-icon { --mdc-icon-size: 13px; }
+      .rng.period { display: inline-flex; align-items: center; gap: 4px; }
+      .rng.period ha-icon { --mdc-icon-size: 13px; }
+      .datebar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+      .datebar select, .datebar .ddate { padding: 4px 6px; border-radius: 8px; border: 1px solid var(--divider-color); background: var(--card-background-color); color: var(--primary-text-color); font-size: 12px; }
+      .dnav { cursor: pointer; border: 1px solid var(--divider-color); background: transparent; color: var(--primary-text-color); border-radius: 8px; width: 28px; height: 28px; font-size: 16px; line-height: 1; }
+      .dnav[disabled] { opacity: .35; cursor: default; }
+      .dlabel { position: relative; display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; padding: 4px 10px; border-radius: 8px; border: 1px solid var(--divider-color); cursor: pointer; flex: 1; justify-content: center; min-width: 120px; }
+      .dlabel ha-icon { --mdc-icon-size: 16px; color: var(--primary-color); }
+      .dhidden { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%; border: 0; padding: 0; }
+      .dsep { color: var(--secondary-text-color); }
+      .dtoday { cursor: pointer; border: 1px solid var(--primary-color); background: transparent; color: var(--primary-color); border-radius: 8px; padding: 4px 10px; font-size: 12px; }
       .flow { position: relative; height: 190px; }
       .flow.tall { height: 236px; }
       .node.tl, .node.tr { align-items: flex-start; }
@@ -2444,8 +2728,8 @@ class EnergyFlowPriceCard extends LitElement {
 
 customElements.define("energy-flow-price-card", EnergyFlowPriceCard);
 
-window.__EFPC_VERSION = "1.24.1-fork";
-console.info("%c energy-flow-price-card %c v1.24.1-fork ", "background:#7dd3fc;color:#0a1420;font-weight:700", "background:#333;color:#fff");
+window.__EFPC_VERSION = "1.25.0-fork";
+console.info("%c energy-flow-price-card %c v1.25.0-fork ", "background:#7dd3fc;color:#0a1420;font-weight:700", "background:#333;color:#fff");
 
 window.customCards = window.customCards || [];
 window.customCards.push({

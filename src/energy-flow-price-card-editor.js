@@ -349,6 +349,13 @@ class EnergyFlowPriceCardEditor extends LitElement {
             </select>
           </label>
           <label class="sel-row">
+            <span>${T("ed_date_selection")}</span>
+            <select @change=${(e) => this._emit({ ...this._config, date_selection: e.target.value })}>
+              ${["auto", "card", "none"].map((v) => html`<option value=${v} ?selected=${(this._config.date_selection ?? "auto") === v}>${T("ed_date_sel_" + v)}</option>`)}
+            </select>
+          </label>
+          <div class="note">${T("ed_date_selection_note")}</div>
+          <label class="sel-row">
             <span>${T("ed_language")}</span>
             <select .value=${lang} @change=${(e) => this._emit({ ...this._config, language: e.target.value })}>
               <option value="auto">${T("ed_lang_auto")}</option>

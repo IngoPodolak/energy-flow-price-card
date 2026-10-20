@@ -38,6 +38,7 @@ color_day_out: "#fb923c"       # Tageswert aus dem Haus
 price_show_costs: true         # Stromkosten heute (bei > 24 h auch gestern)
 price_axis_auto: true          # Preisachse an Preisspanne anpassen (auch negativ)
 price_show_minmax: true        # Tageshöchst-/-tiefstpreis im Preisdiagramm
+date_selection: auto           # auto = HA-Energie-Datumsauswahl folgen | card = eigene Leiste | none
 show_daily_energy: true
 solar_forecast: true           # Prognose aus dem Energie-Dashboard im Solar-Diagramm
 solar_forecast_node: true      # Prognose heute (kWh) unter dem Solar-Symbol

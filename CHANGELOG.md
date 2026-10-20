@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.25.0-fork
+
+- Datumsauswahl: Die Karte folgt der HA-Karte „Energie-Datumsauswahl“ auf demselben Dashboard oder bringt eine eigene Leiste mit (Tag / Woche / Monat / Jahr / Zeitraum, ‹ ›, Kalender, „Heute“). Einstellung `date_selection: auto | card | none`.
+- Für den gewählten Zeitraum: kWh je Knoten und Gerät, Hausverbrauch und Stromkosten aus der Statistik; Verlaufsdiagramme zeigen den Zeitraum. Bei vergangenen Zeiträumen werden aktuelle Werte und Animationen ausgeblendet.
+- Tibber-Dienst: Preise von gestern werden für die Kosten mit abgerufen.
+
 ## v1.24.1-fork
 
 - Zeitlinie des Schiebereglers dicker und leuchtend weiß (auch im Preisdiagramm).
