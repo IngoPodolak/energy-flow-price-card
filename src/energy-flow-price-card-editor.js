@@ -2,6 +2,32 @@ import { LitElement, html, css, nothing } from "lit";
 import { DEFAULTS, DEFAULT_PRICE_STOPS, PRICE_PROFILES, renderIcon, DEVICE_PRESETS, DEFAULT_ANCHORS, HISTORY_RANGES } from "./constants.js";
 import { t, resolveLang, SUPPORTED_LANGS } from "./translations.js";
 
+function cleanDeviceName(n) {
+  return String(n)
+    .replace(/[_\s]*(energy|energie|verbrauch|consumption|total|gesamt|kwh|zähler|zaehler)\b/gi, "")
+    .replace(/\s{2,}/g, " ").trim() || String(n);
+}
+function guessDeviceType(name) {
+  const n = String(name).toLowerCase();
+  const rules = [
+    ["wallbox", /wallbox|ladestation|charger|go-?e|easee|keba|wattpilot/],
+    ["car", /\bauto\b|\bcar\b|tesla|cupra|\bid\.|\bev\b|e-?auto|fahrzeug/],
+    ["heatpump", /w(ä|ae)rmepumpe|heat ?pump|altherma|vitocal|wp\b/],
+    ["ac", /klima|air ?con|\bac\b|split/],
+    ["waterheater", /durchlauf|boiler|warmwasser|water ?heater/],
+    ["washer", /waschmaschine|washer|washing/],
+    ["dryer", /trockner|dryer/],
+    ["dishwasher", /sp(ü|ue)l|dishwasher/],
+    ["oven", /backofen|\bofen\b|oven/],
+    ["hob", /herd|kochfeld|induktion|hob|stove/],
+    ["pool", /pool/],
+    ["gardenpump", /pumpe|pump/],
+    ["heater", /heizstab|heizung|heater|infrarot/],
+  ];
+  for (const [id, re] of rules) if (re.test(n)) return id;
+  return "other";
+}
+
 class EnergyFlowPriceCardEditor extends LitElement {
   static get properties() {
     return { hass: {}, _config: {} };
@@ -51,6 +77,52 @@ class EnergyFlowPriceCardEditor extends LitElement {
     const val = ev.detail?.value ?? ev.target.value;
     if (val === "" || val == null) delete cars[i][field]; else cars[i][field] = val;
     this._emit({ ...this._config, cars });
+  }
+
+  // Import the "individual devices" of the HA energy dashboard: name + energy (kWh) sensor,
+  // the matching power (W) sensor of the same device, and a type/icon guessed from the name.
+  async _importEnergyDevices() {
+    const T = (k) => this._t(k);
+    let prefs;
+    try { prefs = await this.hass.callWS({ type: "energy/get_prefs" }); } catch (e) { prefs = null; }
+    const list = prefs?.device_consumption || [];
+    if (!list.length) { this._importMsg = T("ed_import_none"); this.requestUpdate(); return; }
+    const cars = this._cars().map((c) => ({ ...c }));
+    const haveE = new Set(cars.map((c) => c.energy).filter(Boolean));
+    const haveP = new Set(cars.map((c) => c.power).filter(Boolean));
+    let added = 0;
+    for (const d of list) {
+      const e = d.stat_consumption;
+      if (!e || haveE.has(e)) continue;
+      const st = this.hass.states[e];
+      const name = cleanDeviceName(d.name || st?.attributes?.friendly_name || e);
+      let power = d.stat_rate || this._findPowerSensor(e);
+      if (power && haveP.has(power)) power = null;
+      const type = guessDeviceType(name);
+      const preset = DEVICE_PRESETS.find((x) => x.id === type) || DEVICE_PRESETS[DEVICE_PRESETS.length - 1];
+      const dev = { type, icon: preset.icon, name, energy: e };
+      if (power) { dev.power = power; haveP.add(power); }
+      cars.push(dev);
+      haveE.add(e);
+      added++;
+    }
+    this._importMsg = added ? T("ed_import_done").replace("{n}", added) : T("ed_import_nothing");
+    if (added) this._emit({ ...this._config, cars });
+    else this.requestUpdate();
+  }
+
+  _findPowerSensor(energyId) {
+    const ents = this.hass.entities || {};
+    const dev = ents[energyId]?.device_id;
+    if (!dev) return null;
+    const isPower = (id) => {
+      const a = this.hass.states[id]?.attributes || {};
+      return a.device_class === "power" || ["W", "kW"].includes(a.unit_of_measurement);
+    };
+    const cands = Object.values(ents)
+      .filter((x) => x.device_id === dev && x.entity_id?.startsWith("sensor.") && isPower(x.entity_id))
+      .map((x) => x.entity_id);
+    return cands[0] || null;
   }
 
   _addCar(type = "car") {
@@ -418,6 +490,10 @@ class EnergyFlowPriceCardEditor extends LitElement {
         <div class="section">
           <div class="head">${T("ed_cars")}</div>
           <div class="note">${T("ed_car_note")}</div>
+          <div class="importrow">
+            <button class="add" @click=${() => this._importEnergyDevices()}><ha-icon icon="mdi:import"></ha-icon> ${T("ed_import_energy")}</button>
+            ${this._importMsg ? html`<span class="importmsg">${this._importMsg}</span>` : nothing}
+          </div>
           <div class="addrow">
             <select class="addsel" @change=${(e) => { this._newType = e.target.value; }}>
               ${DEVICE_PRESETS.map((p) => html`<option value=${p.id} ?selected=${(this._newType || "car") === p.id}>${T("dev_" + p.id)}</option>`)}
@@ -658,6 +734,10 @@ class EnergyFlowPriceCardEditor extends LitElement {
       .reset, .add, .mini { cursor: pointer; border: 1px solid var(--primary-color); background: transparent; color: var(--primary-color); border-radius: 8px; padding: 5px 10px; font-size: 12px; }
       .mini { border-color: var(--error-color, #ef4444); color: var(--error-color, #ef4444); padding: 2px 8px; }
       .add { align-self: flex-start; }
+      .importrow { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+      .importrow .add { display: inline-flex; align-items: center; gap: 6px; }
+      .importrow ha-icon { --mdc-icon-size: 16px; }
+      .importmsg { font-size: 12px; color: var(--secondary-text-color); }
       .version { order: 99; font-size: 11px; color: var(--secondary-text-color); text-align: right; opacity: .8; }
       .pickrow { display: flex; flex-direction: column; gap: 4px; }
       .picklbl { font-size: 13px; color: var(--secondary-text-color); }

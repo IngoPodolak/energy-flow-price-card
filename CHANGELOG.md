@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.26.0-fork
+
+- Editor: Geräte aus dem Energie-Dashboard importieren (Name, kWh-Sensor, passender Leistungssensor desselben Geräts, Typ/Symbol aus dem Namen).
+
 ## v1.25.0-fork
 
 - Datumsauswahl: Die Karte folgt der HA-Karte „Energie-Datumsauswahl“ auf demselben Dashboard oder bringt eine eigene Leiste mit (Tag / Woche / Monat / Jahr / Zeitraum, ‹ ›, Kalender, „Heute“). Einstellung `date_selection: auto | card | none`.

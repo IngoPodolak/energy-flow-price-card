@@ -240,6 +240,10 @@ const TRANSLATIONS = {
     ed_date_sel_card: "Own bar in the card",
     ed_date_sel_none: "None (always today)",
     ed_date_selection_note: "With another day or range the card shows the kWh and costs of that period and the charts follow. For past periods current values and animations are hidden. 'HA energy date selection' uses the 'Energy date selection' card on the same dashboard.",
+    ed_import_energy: "Import from energy dashboard",
+    ed_import_none: "No individual devices are configured in the energy dashboard.",
+    ed_import_done: "{n} device(s) imported – please check type, icon and power sensor.",
+    ed_import_nothing: "All devices from the energy dashboard are already present.",
   },
   nl: {
     solar: "Solar",
@@ -576,6 +580,10 @@ const TRANSLATIONS = {
     ed_date_sel_card: "Eigene Leiste in der Karte",
     ed_date_sel_none: "Keine (immer heute)",
     ed_date_selection_note: "Bei einem anderen Tag oder Zeitraum zeigt die Karte die kWh und Kosten dieses Zeitraums, die Diagramme folgen. Liegt der Zeitraum in der Vergangenheit, werden aktuelle Werte und Animationen ausgeblendet. „HA-Datumsauswahl“ nutzt die Karte „Energie-Datumsauswahl“ auf demselben Dashboard.",
+    ed_import_energy: "Aus Energie-Dashboard importieren",
+    ed_import_none: "Im Energie-Dashboard sind keine einzelnen Geräte eingetragen.",
+    ed_import_done: "{n} Gerät(e) importiert – Typ, Symbol und Leistungssensor bitte prüfen.",
+    ed_import_nothing: "Alle Geräte aus dem Energie-Dashboard sind bereits vorhanden.",
   },
 };
 
