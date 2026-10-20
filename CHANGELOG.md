@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.30.2-fork
+
+- Editor: „Effekte reduzieren“ in den allgemeinen Anzeige-Bereich verschoben (gilt für beide Ansichten).
+
 ## v1.30.1-fork
 
 - Performance: Neon-Leuchten ohne CSS-Filter (flüssige Animation), Neuzeichnen nur bei Änderung der verwendeten Entitäten, kein sekündliches Neuzeichnen mehr bei aktiven Linien, Theme-Farben und Positionsmessung zwischengespeichert.

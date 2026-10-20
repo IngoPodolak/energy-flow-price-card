@@ -269,7 +269,7 @@ const TRANSLATIONS = {
     ed_battery_ring: "Battery icon as a ring (off = square, like the other icons)",
     ed_car_ring: "Car icon as a ring (off = square, like the other icons)",
     ed_visual_layout: "Use visual layout (house photo instead of abstract wires)",
-    ed_reduce_effects: "Reduce effects (no neon glow / text shadow) — for weaker-GPU devices",
+    ed_reduce_effects: "Reduce effects (no neon glow, no text shadow) – for weaker devices",
     ed_wire_style: "Flow line style",
     ed_wire_style_dashed: "Dashed (current)",
     ed_wire_style_neon: "Neon glow",
@@ -633,7 +633,7 @@ const TRANSLATIONS = {
     ed_battery_ring: "Akku-Symbol als Ring (aus = quadratisch, wie die anderen Symbole)",
     ed_car_ring: "Auto-Symbol als Ring (aus = quadratisch, wie die anderen Symbole)",
     ed_visual_layout: "Visuelle Ansicht verwenden (Hausfoto statt abstrakter Linien)",
-    ed_reduce_effects: "Effekte reduzieren (kein Neon-Leuchten / Textschatten) — für Geräte mit schwächerer GPU",
+    ed_reduce_effects: "Effekte reduzieren (kein Neon-Leuchten, kein Textschatten) – für schwächere Geräte",
     ed_wire_style: "Stil der Flusslinien",
     ed_wire_style_dashed: "Gestrichelt (aktuell)",
     ed_wire_style_neon: "Neon-Leuchten",
@@ -1264,9 +1264,6 @@ class EnergyFlowPriceCardEditor extends LitElement {
           </ha-formfield>
           ${this._config.use_visual_layout === true ? html`
             <div class="subblock">
-              <ha-formfield label=${T("ed_reduce_effects")}>
-                <ha-switch .checked=${this._config.reduce_effects === true} @change=${(e) => this._toggle("reduce_effects", e)}></ha-switch>
-              </ha-formfield>
               <div class="slider-row">
                 <span>${T("ed_house_scale")}: <b>${this._config.house_image_scale ?? 100}%</b></span>
                 <input type="range" min="30" max="130" step="5" .value=${this._config.house_image_scale ?? 100}
@@ -1312,6 +1309,9 @@ class EnergyFlowPriceCardEditor extends LitElement {
               <option value="neon">${T("ed_wire_style_neon")}</option>
             </select>
           </label>
+          <ha-formfield label=${T("ed_reduce_effects")}>
+            <ha-switch .checked=${this._config.reduce_effects === true} @change=${(e) => this._toggle("reduce_effects", e)}></ha-switch>
+          </ha-formfield>
           <label class="sel-row">
             <span>${T("ed_date_selection")}</span>
             <select @change=${(e) => this._emit({ ...this._config, date_selection: e.target.value })}>
@@ -4867,8 +4867,8 @@ class EnergyFlowPriceCard extends LitElement {
 
 customElements.define("energy-flow-price-card", EnergyFlowPriceCard);
 
-window.__EFPC_VERSION = "1.30.1-fork";
-console.info("%c energy-flow-price-card %c v1.30.1-fork ", "background:#7dd3fc;color:#0a1420;font-weight:700", "background:#333;color:#fff");
+window.__EFPC_VERSION = "1.30.2-fork";
+console.info("%c energy-flow-price-card %c v1.30.2-fork ", "background:#7dd3fc;color:#0a1420;font-weight:700", "background:#333;color:#fff");
 
 window.customCards = window.customCards || [];
 window.customCards.push({

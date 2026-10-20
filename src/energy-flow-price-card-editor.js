@@ -372,9 +372,6 @@ class EnergyFlowPriceCardEditor extends LitElement {
           </ha-formfield>
           ${this._config.use_visual_layout === true ? html`
             <div class="subblock">
-              <ha-formfield label=${T("ed_reduce_effects")}>
-                <ha-switch .checked=${this._config.reduce_effects === true} @change=${(e) => this._toggle("reduce_effects", e)}></ha-switch>
-              </ha-formfield>
               <div class="slider-row">
                 <span>${T("ed_house_scale")}: <b>${this._config.house_image_scale ?? 100}%</b></span>
                 <input type="range" min="30" max="130" step="5" .value=${this._config.house_image_scale ?? 100}
@@ -420,6 +417,9 @@ class EnergyFlowPriceCardEditor extends LitElement {
               <option value="neon">${T("ed_wire_style_neon")}</option>
             </select>
           </label>
+          <ha-formfield label=${T("ed_reduce_effects")}>
+            <ha-switch .checked=${this._config.reduce_effects === true} @change=${(e) => this._toggle("reduce_effects", e)}></ha-switch>
+          </ha-formfield>
           <label class="sel-row">
             <span>${T("ed_date_selection")}</span>
             <select @change=${(e) => this._emit({ ...this._config, date_selection: e.target.value })}>
