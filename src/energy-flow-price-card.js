@@ -108,6 +108,23 @@ function startOfToday() {
   return d.getTime();
 }
 
+function colorDist(a, b) {
+  try {
+    const x = hex2rgb(a), y = hex2rgb(b);
+    // weighted RGB distance (closer to perceived difference than plain RGB)
+    const rm = (x[0] + y[0]) / 2;
+    const dr = x[0] - y[0], dg = x[1] - y[1], db = x[2] - y[2];
+    return Math.sqrt((2 + rm / 256) * dr * dr + 4 * dg * dg + (2 + (255 - rm) / 256) * db * db);
+  } catch (e) { return 999; }
+}
+function hsl2hex(h, s, l) {
+  s /= 100; l /= 100;
+  const k = (n) => (n + h / 30) % 12;
+  const a = s * Math.min(l, 1 - l);
+  const f = (n) => l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
+  return rgb2hex(f(0) * 255, f(8) * 255, f(4) * 255);
+}
+
 function hex2rgb(h) {
   const m = h.replace("#", "");
   const n = m.length === 3 ? m.split("").map((c) => c + c).join("") : m;
@@ -673,6 +690,36 @@ class EnergyFlowPriceCard extends LitElement {
     return this._cars().map((d) => ({ ...d, type: d.type || "car" }));
   }
 
+  // One distinct colour per device: own colour if set, otherwise the next palette colour that
+  // is clearly different from all colours already in use and from the node colours
+  // (solar/grid/battery/home); beyond the palette further hues are generated.
+  _devColors() {
+    const c = this._config;
+    const devs = this._devices();
+    const reserved = [c.color_solar, c.color_grid, c.color_battery, c.color_home].filter((x) => /^#[0-9a-f]{3,6}$/i.test(x || ""));
+    const key = JSON.stringify([devs.map((d) => d.color || ""), c.color_car, reserved]);
+    if (this._dcm && this._dcm.key === key) return this._dcm.map;
+    const used = [];
+    const map = devs.map((d) => (d.color ? (used.push(d.color), d.color) : null));
+    const pal = [...new Set([c.color_car || DEVICE_PALETTE[0], ...DEVICE_PALETTE])];
+    const far = (col, list, th) => list.every((u) => colorDist(col, u) >= th);
+    let gi = 0;
+    devs.forEach((d, i) => {
+      if (map[i]) return;
+      let col = pal.find((p) => !used.includes(p) && far(p, used, 110) && far(p, reserved, 80))
+        || pal.find((p) => !used.includes(p) && far(p, used, 70));
+      while (!col && gi < 720) {
+        const cand = hsl2hex((gi * 137.508 + 20) % 360, 70 + (gi % 3) * 8, 58 + (gi % 2) * 10);
+        gi++;
+        if (far(cand, used, 60) || gi >= 720) col = cand;
+      }
+      map[i] = col;
+      used.push(col);
+    });
+    this._dcm = { key, map };
+    return map;
+  }
+
   _deviceIcon(d) {
     // older configs stored the MDI heat pump; use the card's own, clearer drawing instead
     if (d.type === "heatpump" && (!d.icon || d.icon === "mdi:heat-pump")) return "efp:heat-pump";
@@ -1159,6 +1206,7 @@ class EnergyFlowPriceCard extends LitElement {
 
     // Devices. A car with a "charging" (on/off) entity can detect a guest vehicle (see original).
     const devs = this._devices();
+    const devColors = this._devColors();
     const daily = this._daily(devs);
     const guests = [];
     const items = devs.map((d, i) => {
@@ -1170,7 +1218,7 @@ class EnergyFlowPriceCard extends LitElement {
       const chargingState = d.charging ? hass.states?.[d.charging]?.state : null;
       const isGuest = d.type === "car" && !!d.charging && powerActive && chargingState !== "on";
       if (isGuest) {
-        guests.push({ name: this._t("guest_car"), power: p, soc: null, active: true, hasEnt: true, icon: "mdi:car-electric", isCar: true, day: null, entity: d.power, color: d.color });
+        guests.push({ name: this._t("guest_car"), power: p, soc: null, active: true, hasEnt: true, icon: "mdi:car-electric", isCar: true, day: null, entity: d.power, color: devColors[i] });
       }
       return {
         name: d.name || `${this._t("dev_" + d.type) || this._t("car")} ${i + 1}`,
@@ -1180,7 +1228,7 @@ class EnergyFlowPriceCard extends LitElement {
         hasEnt: !!d.power,
         icon: this._deviceIcon(d),
         isCar: d.type === "car",
-        color: d.color,
+        color: devColors[i],
         day: daily ? daily.devices[i] : null,
         entity: d.power || d.soc,
         thr: dThr,
@@ -2021,10 +2069,11 @@ class EnergyFlowPriceCard extends LitElement {
     } else if (mode === "devices" && (this._devView || c.devices_view || "line") !== "line") {
       return this._devicesAltChart(c, spec, this._devView || c.devices_view);
     } else if (mode === "devices") {
-      const devs = this._devices().filter((d) => d.power);
+      const cols = this._devColors();
+      const devs = this._devices().map((d, i) => ({ ...d, idx: i })).filter((d) => d.power);
       entities = devs.map((d) => d.power);
-      series = devs.map((d, i) => ({
-        name: d.name || this._t("dev_" + d.type), color: d.color || DEVICE_PALETTE[i % DEVICE_PALETTE.length],
+      series = devs.map((d) => ({
+        name: d.name || this._t("dev_" + d.type), color: cols[d.idx],
         entity: d.power, live: live(d.power),
       }));
       opts = { title: T("devices_title") };
@@ -2320,7 +2369,7 @@ class EnergyFlowPriceCard extends LitElement {
     };
     const GREY = "#6b7280";
     const items = data.per.map(({ d, vals }) => ({
-      name: d.name || T("dev_" + d.type), color: d.color || DEVICE_PALETTE[d.idx % DEVICE_PALETTE.length], icon: this._deviceIcon(d),
+      name: d.name || T("dev_" + d.type), color: this._devColors()[d.idx], icon: this._deviceIcon(d),
       vals, total: vals.reduce((a, v) => a + (v || 0), 0),
     }));
     const homeTotal = data.home.reduce((a, v) => a + v, 0);
@@ -3026,8 +3075,8 @@ class EnergyFlowPriceCard extends LitElement {
 
 customElements.define("energy-flow-price-card", EnergyFlowPriceCard);
 
-window.__EFPC_VERSION = "1.28.0-fork";
-console.info("%c energy-flow-price-card %c v1.28.0-fork ", "background:#7dd3fc;color:#0a1420;font-weight:700", "background:#333;color:#fff");
+window.__EFPC_VERSION = "1.28.1-fork";
+console.info("%c energy-flow-price-card %c v1.28.1-fork ", "background:#7dd3fc;color:#0a1420;font-weight:700", "background:#333;color:#fff");
 
 window.customCards = window.customCards || [];
 window.customCards.push({

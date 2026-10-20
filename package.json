@@ -1,6 +1,6 @@
 {
   "name": "energy-flow-price-card",
-  "version": "1.28.0-fork",
+  "version": "1.28.1-fork",
   "description": "Compact energy flow + quarter-hour price card for Home Assistant (Frank Energie friendly).",
   "type": "module",
   "main": "dist/energy-flow-price-card.js",

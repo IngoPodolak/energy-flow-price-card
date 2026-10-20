@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.28.1-fork
+
+- Gerätefarben eindeutig: 24 Farben + automatisch erzeugte weitere, ohne Doppelungen und mit Abstand zu den Knotenfarben; gleiche Farbe in Energiefluss und Diagrammen.
+
 ## v1.28.0-fork
 
 - Hauptansicht: PV-Eigenverbrauch und Autarkiegrad als Ringanzeigen (heute bzw. gewählter Zeitraum), abschaltbar (`show_ratios`).

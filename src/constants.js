@@ -144,7 +144,11 @@ export const DEVICE_PRESETS = [
 ];
 
 // Colors used for device series in the "devices" chart when a device has no own color.
-export const DEVICE_PALETTE = ["#a78bfa", "#f472b6", "#38bdf8", "#fb923c", "#34d399", "#facc15", "#e879f9", "#94a3b8"];
+export const DEVICE_PALETTE = [
+  "#a78bfa", "#f472b6", "#38bdf8", "#fb923c", "#34d399", "#facc15", "#e879f9", "#60a5fa",
+  "#f87171", "#2dd4bf", "#a3e635", "#c084fc", "#fbbf24", "#22d3ee", "#fb7185", "#4ade80",
+  "#818cf8", "#f59e0b", "#14b8a6", "#ec4899", "#84cc16", "#06b6d4", "#d946ef", "#94a3b8",
+];
 
 // Selectable time spans for the history charts (hours; "today" = since midnight).
 export const HISTORY_RANGES = [
