@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.30.0-fork
+
+- Gerätefarben wie im HA-Energie-Dashboard (`--graph-color-N` nach Position in der Geräteliste), Geräte ohne Eintrag dort erhalten automatisch kontrastreiche Farben; `device_colors: energy | auto`.
+- Balken/Rangliste/Ring im HA-Stil: halbtransparente Füllung mit kräftigem Rand.
+
 ## v1.29.1-fork
 
 - Gerätefarben nach wahrgenommenem Farbabstand (CIELAB) vergeben: jedes Gerät bekommt die Farbe, die sich am stärksten von allen bisherigen unterscheidet.

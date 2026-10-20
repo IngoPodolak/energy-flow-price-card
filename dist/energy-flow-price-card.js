@@ -145,6 +145,7 @@ const DEFAULTS = {
   energy_battery_mode: "dual",
   solar_forecast: true,     // solar forecast from the HA energy dashboard (Forecast.Solar, Solcast …), if configured there
   solar_forecast_node: true, // also show today's forecast kWh under the solar node
+  device_colors: "energy",  // "energy" = same colours as the HA energy dashboard (fallback: auto) | "auto"
   devices_collapse: "expanded", // device row: "expanded" | "collapsed" | "top" (biggest N)
   devices_top_n: 4,
   show_ratios: true,        // PV self-consumption + self-sufficiency gauges under the flow
@@ -501,6 +502,9 @@ const TRANSLATIONS = {
     ed_dev_collapse_collapsed: "Always collapsed",
     ed_dev_collapse_top: "Only the biggest consumers",
     ed_dev_top_n: "Number of biggest consumers",
+    ed_device_colors: "Device colours",
+    ed_device_colors_energy: "Same as energy dashboard",
+    ed_device_colors_auto: "Automatic (maximum contrast)",
   },
   nl: {
     solar: "Solar",
@@ -862,6 +866,9 @@ const TRANSLATIONS = {
     ed_dev_collapse_collapsed: "Immer eingeklappt",
     ed_dev_collapse_top: "Nur die größten Verbraucher",
     ed_dev_top_n: "Anzahl größte Verbraucher",
+    ed_device_colors: "Gerätefarben",
+    ed_device_colors_energy: "Wie im Energie-Dashboard",
+    ed_device_colors_auto: "Automatisch (maximaler Kontrast)",
   },
 };
 
@@ -1378,6 +1385,12 @@ class EnergyFlowPriceCardEditor extends LitElement {
         <div class="section">
           <div class="head">${T("ed_cars")}</div>
           <div class="note">${T("ed_car_note")}</div>
+          <label class="sel-row">
+            <span>${T("ed_device_colors")}</span>
+            <select @change=${(e) => this._emit({ ...this._config, device_colors: e.target.value })}>
+              ${["energy", "auto"].map((v) => html`<option value=${v} ?selected=${(this._config.device_colors ?? "energy") === v}>${T("ed_device_colors_" + v)}</option>`)}
+            </select>
+          </label>
           <div class="importrow">
             <button class="add" @click=${() => this._importEnergyDevices()}><ha-icon icon="mdi:import"></ha-icon> ${T("ed_import_energy")}</button>
             ${this._importMsg ? html`<span class="importmsg">${this._importMsg}</span>` : nothing}
@@ -2370,15 +2383,44 @@ class EnergyFlowPriceCard extends LitElement {
   // One distinct colour per device: own colour if set, otherwise the next palette colour that
   // is clearly different from all colours already in use and from the node colours
   // (solar/grid/battery/home); beyond the palette further hues are generated.
+  // Energy dashboard preferences (for device colours and import), refreshed every 10 min.
+  _energyPrefs() {
+    const e = this._eprefs;
+    if (!this.hass?.callWS) return null;
+    if (!e || (!e.busy && Date.now() - e.fetched > 600000)) {
+      this._eprefs = { ...(e || {}), busy: true, fetched: Date.now() };
+      this.hass.callWS({ type: "energy/get_prefs" })
+        .then((p) => { this._eprefs = { prefs: p, busy: false, fetched: Date.now() }; this._dcm = null; this.requestUpdate(); })
+        .catch(() => { this._eprefs = { prefs: null, busy: false, fetched: Date.now() }; });
+    }
+    return this._eprefs?.prefs || null;
+  }
+
+  // The colour HA's energy dashboard uses for a device: --graph-color-N by its position in
+  // the energy dashboard's device list.
+  _energyColorOf(d) {
+    const prefs = this._energyPrefs();
+    const list = prefs?.device_consumption || [];
+    if (!list.length) return null;
+    const idx = list.findIndex((x) => (d.energy && x.stat_consumption === d.energy) || (d.power && x.stat_rate === d.power));
+    if (idx < 0) return null;
+    let cs;
+    try { cs = getComputedStyle(this); } catch (e) { return null; }
+    const v = (cs.getPropertyValue(`--graph-color-${(idx % 54) + 1}`) || "").trim();
+    return v || null;
+  }
+
   _devColors() {
     const c = this._config;
     const devs = this._devices();
     const okHex = (x) => /^#[0-9a-f]{6}$/i.test(x || "");
     const reserved = [c.color_solar, c.color_grid, c.color_battery, c.color_home].filter(okHex);
-    const key = JSON.stringify([devs.map((d) => d.color || ""), c.color_car, reserved]);
+    const useEnergy = c.device_colors !== "auto";
+    const eCols = devs.map((d) => (useEnergy && !d.color ? this._energyColorOf(d) : null));
+    const key = JSON.stringify([devs.map((d) => d.color || ""), eCols, c.color_car, reserved]);
     if (this._dcm && this._dcm.key === key) return this._dcm.map;
-    const used = devs.map((d) => d.color).filter(okHex);
-    const map = devs.map((d) => d.color || null);
+    const map = devs.map((d, i) => d.color || eCols[i] || null);
+    const used = map.filter(Boolean).map((x) => (okHex(x) ? x : null)).filter(Boolean);
     const cand = [...DEVICE_PALETTE];
     for (let k = 0; k < 36; k++) cand.push(hsl2hex((k * 137.508) % 360, 75, k % 2 ? 72 : 58));
     const minDist = (col, list) => list.reduce((m, u) => Math.min(m, colorDist(col, u)), 999);
@@ -4116,7 +4158,9 @@ class EnergyFlowPriceCard extends LitElement {
                   if (v <= 0) return nothing;
                   const h = (v / maxV) * 100;
                   y -= h;
-                  return svg`<rect x="${x0}" y="${y}" width="${bw}" height="${h}" fill="${x.color}" fill-opacity="${bi == null || bi === i ? 0.85 : 0.35}"></rect>`;
+                  const on = bi == null || bi === i;
+                  return svg`<rect x="${x0}" y="${y}" width="${bw}" height="${h}" fill="${x.color}" fill-opacity="${on ? 0.45 : 0.15}"
+                    stroke="${x.color}" stroke-opacity="${on ? 1 : 0.4}" stroke-width="1" vector-effect="non-scaling-stroke"></rect>`;
                 })}`;
               })}
             </svg>
@@ -4136,7 +4180,7 @@ class EnergyFlowPriceCard extends LitElement {
         <div class="rank">${sorted.map((x) => html`
           <div class="rrow" @click=${() => toggle(x.name)}>
             <span class="rname"><span class="rico" style="color:${x.color}">${renderIcon(x.icon)}</span>${x.name}</span>
-            <span class="rbarw"><span class="rbar" style="width:${(x.total / maxV) * 100}%;background:${x.color}"></span></span>
+            <span class="rbarw"><span class="rbar" style="width:${(x.total / maxV) * 100}%;--c:${x.color}"></span></span>
             <span class="rval">${kwh(x.total)}<small>${total ? Math.round((x.total / total) * 100) : 0} %</small></span>
           </div>`)}</div>`;
     }
@@ -4157,7 +4201,7 @@ class EnergyFlowPriceCard extends LitElement {
               if (a <= 0) return nothing;
               const a1 = a0, a2 = a0 + Math.min(a, Math.PI * 2 - 0.0001);
               a0 += a;
-              return svg`<path d="${arc(a1 + 0.01, a2 - 0.01)}" fill="${x.color}" fill-opacity=".85" @click=${() => toggle(x.name)}><title>${x.name}: ${kwh(x.total)}</title></path>`;
+              return svg`<path d="${arc(a1 + 0.01, a2 - 0.01)}" fill="${x.color}" fill-opacity=".5" stroke="${x.color}" stroke-width=".6" @click=${() => toggle(x.name)}><title>${x.name}: ${kwh(x.total)}</title></path>`;
             }) : nothing}
             <text x="50" y="47" text-anchor="middle" class="dt1">${T("total")}</text>
             <text x="50" y="58" text-anchor="middle" class="dt2">${kwh(total)}</text>
@@ -4759,8 +4803,8 @@ class EnergyFlowPriceCard extends LitElement {
       .rname { display: inline-flex; align-items: center; gap: 5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--primary-text-color); }
       .rico { display: inline-flex; --mdc-icon-size: 15px; }
       .rico .efp-icon { width: 15px; height: 15px; }
-      .rbarw { height: 12px; background: rgba(127,127,127,.12); border-radius: 4px; overflow: hidden; }
-      .rbar { display: block; height: 100%; border-radius: 4px; opacity: .85; }
+      .rbarw { height: 14px; background: rgba(127,127,127,.12); border-radius: 4px; overflow: hidden; }
+      .rbar { display: block; height: 100%; border-radius: 4px; box-sizing: border-box; border: 1.5px solid var(--c); background: color-mix(in srgb, var(--c) 45%, transparent); }
       .rval { font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
       .rval small { font-weight: 400; color: var(--secondary-text-color); margin-left: 5px; }
       .donutwrap { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; justify-content: center; }
@@ -4785,8 +4829,8 @@ class EnergyFlowPriceCard extends LitElement {
 
 customElements.define("energy-flow-price-card", EnergyFlowPriceCard);
 
-window.__EFPC_VERSION = "1.29.1-fork";
-console.info("%c energy-flow-price-card %c v1.29.1-fork ", "background:#7dd3fc;color:#0a1420;font-weight:700", "background:#333;color:#fff");
+window.__EFPC_VERSION = "1.30.0-fork";
+console.info("%c energy-flow-price-card %c v1.30.0-fork ", "background:#7dd3fc;color:#0a1420;font-weight:700", "background:#333;color:#fff");
 
 window.customCards = window.customCards || [];
 window.customCards.push({

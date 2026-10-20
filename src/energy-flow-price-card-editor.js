@@ -493,6 +493,12 @@ class EnergyFlowPriceCardEditor extends LitElement {
         <div class="section">
           <div class="head">${T("ed_cars")}</div>
           <div class="note">${T("ed_car_note")}</div>
+          <label class="sel-row">
+            <span>${T("ed_device_colors")}</span>
+            <select @change=${(e) => this._emit({ ...this._config, device_colors: e.target.value })}>
+              ${["energy", "auto"].map((v) => html`<option value=${v} ?selected=${(this._config.device_colors ?? "energy") === v}>${T("ed_device_colors_" + v)}</option>`)}
+            </select>
+          </label>
           <div class="importrow">
             <button class="add" @click=${() => this._importEnergyDevices()}><ha-icon icon="mdi:import"></ha-icon> ${T("ed_import_energy")}</button>
             ${this._importMsg ? html`<span class="importmsg">${this._importMsg}</span>` : nothing}

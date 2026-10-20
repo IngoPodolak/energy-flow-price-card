@@ -113,6 +113,7 @@ export const DEFAULTS = {
   energy_battery_mode: "dual",
   solar_forecast: true,     // solar forecast from the HA energy dashboard (Forecast.Solar, Solcast …), if configured there
   solar_forecast_node: true, // also show today's forecast kWh under the solar node
+  device_colors: "energy",  // "energy" = same colours as the HA energy dashboard (fallback: auto) | "auto"
   devices_collapse: "expanded", // device row: "expanded" | "collapsed" | "top" (biggest N)
   devices_top_n: 4,
   show_ratios: true,        // PV self-consumption + self-sufficiency gauges under the flow

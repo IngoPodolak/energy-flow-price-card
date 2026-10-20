@@ -265,6 +265,9 @@ const TRANSLATIONS = {
     ed_dev_collapse_collapsed: "Always collapsed",
     ed_dev_collapse_top: "Only the biggest consumers",
     ed_dev_top_n: "Number of biggest consumers",
+    ed_device_colors: "Device colours",
+    ed_device_colors_energy: "Same as energy dashboard",
+    ed_device_colors_auto: "Automatic (maximum contrast)",
   },
   nl: {
     solar: "Solar",
@@ -626,6 +629,9 @@ const TRANSLATIONS = {
     ed_dev_collapse_collapsed: "Immer eingeklappt",
     ed_dev_collapse_top: "Nur die größten Verbraucher",
     ed_dev_top_n: "Anzahl größte Verbraucher",
+    ed_device_colors: "Gerätefarben",
+    ed_device_colors_energy: "Wie im Energie-Dashboard",
+    ed_device_colors_auto: "Automatisch (maximaler Kontrast)",
   },
 };
 
