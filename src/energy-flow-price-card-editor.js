@@ -464,6 +464,9 @@ class EnergyFlowPriceCardEditor extends LitElement {
           <ha-formfield label=${T("ed_show_daily")}>
             <ha-switch .checked=${this._config.show_daily_energy !== false} @change=${(e) => this._toggle("show_daily_energy", e)}></ha-switch>
           </ha-formfield>
+          <ha-formfield label=${T("ed_show_ratios")}>
+            <ha-switch .checked=${this._config.show_ratios !== false} @change=${(e) => this._toggle("show_ratios", e)}></ha-switch>
+          </ha-formfield>
           <ha-formfield label=${T("ed_home_costs")}>
             <ha-switch .checked=${this._config.home_show_costs !== false} @change=${(e) => this._toggle("home_show_costs", e)}></ha-switch>
           </ha-formfield>
@@ -632,6 +635,12 @@ class EnergyFlowPriceCardEditor extends LitElement {
 
         <div class="section">
           <div class="head">${T("ed_chart_tabs")}</div>
+          <label class="sel-row">
+            <span>${T("ed_devices_view")}</span>
+            <select @change=${(e) => this._emit({ ...this._config, devices_view: e.target.value })}>
+              ${["line", "bars", "rank", "donut", "sankey"].map((v) => html`<option value=${v} ?selected=${(this._config.devices_view ?? "line") === v}>${T("view_" + v)}</option>`)}
+            </select>
+          </label>
           <label class="sel-row">
             <span>${T("ed_history_range")}</span>
             <select @change=${(e) => this._emit({ ...this._config, history_range: e.target.value })}>

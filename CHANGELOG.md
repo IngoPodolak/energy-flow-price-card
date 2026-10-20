@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.28.0-fork
+
+- Hauptansicht: PV-Eigenverbrauch und Autarkiegrad als Ringanzeigen (heute bzw. gewählter Zeitraum), abschaltbar (`show_ratios`).
+
+## v1.27.0-fork
+
+- Geräte-Diagramm mit alternativen Ansichten: Linie, gestapelte kWh-Balken (inkl. „Nicht erfasst“), Rangliste, Ring und Energiefluss (Netz/PV/Akku → Haus → Geräte). Standard-Ansicht im Editor wählbar (`devices_view`).
+
 ## v1.26.0-fork
 
 - Editor: Geräte aus dem Energie-Dashboard importieren (Name, kWh-Sensor, passender Leistungssensor desselben Geräts, Typ/Symbol aus dem Namen).

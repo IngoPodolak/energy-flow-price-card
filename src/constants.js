@@ -113,6 +113,7 @@ export const DEFAULTS = {
   energy_battery_mode: "dual",
   solar_forecast: true,     // solar forecast from the HA energy dashboard (Forecast.Solar, Solcast …), if configured there
   solar_forecast_node: true, // also show today's forecast kWh under the solar node
+  show_ratios: true,        // PV self-consumption + self-sufficiency gauges under the flow
   date_selection: "auto",   // "auto" (follow the HA energy date selection card), "card" (own date bar), "none"
   price_show_costs: true,
   home_show_costs: true,    // today's electricity costs under the house   // price chart: costs of the grid import today (and yesterday for windows > 24 h)
