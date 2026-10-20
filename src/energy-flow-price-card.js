@@ -1240,13 +1240,29 @@ class EnergyFlowPriceCard extends LitElement {
     this._devEntities = allDevs.map((x) => x.entity);
     const devMode = ["merged", "scroll"].includes(c.car_mode) ? c.car_mode : "row";
     const rowMode = devMode === "row" && allDevs.length > 1;
-    const rowDevs = rowMode
+    const rowAll = rowMode
       ? allDevs
           .map((d, idx) => ({ ...d, idx, past: noLive, ws: this._wireState("dev:" + idx, d.active ? d.power : 0, true, d.thr ?? thr) }))
           .filter((d) => noLive
             ? (d.showMode === "always" || c.display_zero || (d.day != null && d.day > 0.005))
             : (d.showMode === "always" || (d.showMode === "active" ? d.ws.show : (c.display_zero || d.ws.show))))
       : [];
+    // Collapse: "expanded" | "collapsed" | "top" (only the biggest N consumers); the
+    // button under the row toggles between the configured state and showing everything.
+    const collapseMode = ["collapsed", "top"].includes(c.devices_collapse) ? c.devices_collapse : "expanded";
+    const topN = Math.max(1, parseInt(c.devices_top_n, 10) || 4);
+    const open = this._devOpen ?? (collapseMode === "expanded");
+    const metric = (d) => (noLive ? (d.day || 0) : (d.active ? Math.abs(d.power || 0) : 0) * 1e6 + (d.day || 0));
+    let rowDevs = rowAll;
+    if (!open) {
+      if (collapseMode === "top") {
+        const keep = new Set([...rowAll].sort((a, b) => metric(b) - metric(a)).slice(0, topN).map((d) => d.idx));
+        rowDevs = rowAll.filter((d) => keep.has(d.idx));
+      } else rowDevs = [];
+    }
+    const hiddenCount = rowAll.length - rowDevs.length;
+    const canToggle = rowMode && rowAll.length > 0 && (collapseMode !== "expanded" || this._devOpen === false || rowAll.length > topN)
+      && !(collapseMode === "top" && rowAll.length <= topN);
     const devsShown = allDevs.length ? allDevs : [{ name: this._t("devices"), power: null, soc: null, active: false, hasEnt: false, icon: "mdi:power-plug", isCar: false, day: null }];
 
     const bs = (() => {
@@ -1509,6 +1525,12 @@ class EnergyFlowPriceCard extends LitElement {
         </div>
       </div>
       ${rowDevs.length ? html`<div class="devrow">${rowDevs.map((d) => this._renderDeviceItem(d, c, dayOut))}</div>` : nothing}
+      ${canToggle ? html`<button class="devtoggle" @click=${() => { this._devOpen = !open; this.requestUpdate(); }}>
+          <ha-icon icon=${open ? "mdi:chevron-up" : "mdi:chevron-down"}></ha-icon>
+          ${open ? this._t("dev_collapse") : hiddenCount === rowAll.length
+            ? this._t("dev_show_all").replace("{n}", rowAll.length)
+            : this._t("dev_show_more").replace("{n}", hiddenCount)}
+        </button>` : nothing}
       ${this._renderRatios(daily, P)}
       </div>
     `;
@@ -2878,6 +2900,10 @@ class EnergyFlowPriceCard extends LitElement {
       .devrow { position: relative; z-index: 2; display: grid; grid-template-columns: repeat(auto-fit, minmax(92px, 1fr)); gap: 22px 6px; margin-top: 22px; }
       .devitem { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 1px; cursor: pointer; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; touch-action: manipulation; min-width: 0; }
       .devitem.idle { opacity: .55; }
+      .devtoggle { position: relative; z-index: 2; display: flex; align-items: center; gap: 4px; margin: 8px auto 0; cursor: pointer; border: 1px solid var(--divider-color);
+        background: transparent; color: var(--secondary-text-color); border-radius: 999px; padding: 2px 12px 2px 8px; font-size: 11.5px; }
+      .devtoggle ha-icon { --mdc-icon-size: 16px; }
+      .devtoggle:hover { color: var(--primary-text-color); border-color: var(--primary-color); }
       .ratios { position: relative; z-index: 2; display: flex; justify-content: center; gap: 28px; margin-top: 14px; flex-wrap: wrap; }
       .ratio { display: flex; align-items: center; gap: 8px; }
       .rring { position: relative; width: 40px; height: 40px; }
@@ -3075,8 +3101,8 @@ class EnergyFlowPriceCard extends LitElement {
 
 customElements.define("energy-flow-price-card", EnergyFlowPriceCard);
 
-window.__EFPC_VERSION = "1.28.1-fork";
-console.info("%c energy-flow-price-card %c v1.28.1-fork ", "background:#7dd3fc;color:#0a1420;font-weight:700", "background:#333;color:#fff");
+window.__EFPC_VERSION = "1.29.0-fork";
+console.info("%c energy-flow-price-card %c v1.29.0-fork ", "background:#7dd3fc;color:#0a1420;font-weight:700", "background:#333;color:#fff");
 
 window.customCards = window.customCards || [];
 window.customCards.push({

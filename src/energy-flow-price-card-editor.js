@@ -510,6 +510,19 @@ class EnergyFlowPriceCardEditor extends LitElement {
                 <option value=${v} ?selected=${(this._config.car_mode ?? "row") === v}>${l}</option>`)}
             </select>
           </label>
+          ${(this._config.car_mode ?? "row") === "row" ? html`
+            <label class="sel-row">
+              <span>${T("ed_dev_collapse")}</span>
+              <select @change=${(e) => this._emit({ ...this._config, devices_collapse: e.target.value })}>
+                ${["expanded", "collapsed", "top"].map((v) => html`<option value=${v} ?selected=${(this._config.devices_collapse ?? "expanded") === v}>${T("ed_dev_collapse_" + v)}</option>`)}
+              </select>
+            </label>
+            ${this._config.devices_collapse === "top" ? html`
+              <label class="sel-row">
+                <span>${T("ed_dev_top_n")}</span>
+                <span class="numwrap"><input class="num" type="number" min="1" max="50" step="1" .value=${String(this._config.devices_top_n ?? 4)}
+                  @change=${(e) => this._emit({ ...this._config, devices_top_n: Math.max(1, parseInt(e.target.value, 10) || 4) })} /></span>
+              </label>` : nothing}` : nothing}
           ${this._config.car_mode === "scroll" ? html`
             <div class="slider-row">
               <span>${T("ed_car_interval")}: <b>${this._config.car_scroll_interval ?? 5}s</b></span>

@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.29.0-fork
+
+- Geräte-Zeile ein-/ausklappbar; Einstellung `devices_collapse`: expanded / collapsed / top (nur die größten `devices_top_n` Verbraucher).
+
 ## v1.28.1-fork
 
 - Gerätefarben eindeutig: 24 Farben + automatisch erzeugte weitere, ohne Doppelungen und mit Abstand zu den Knotenfarben; gleiche Farbe in Energiefluss und Diagrammen.
