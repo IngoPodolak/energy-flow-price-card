@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.29.1-fork
+
+- Gerätefarben nach wahrgenommenem Farbabstand (CIELAB) vergeben: jedes Gerät bekommt die Farbe, die sich am stärksten von allen bisherigen unterscheidet.
+
 ## v1.29.0-fork
 
 - Geräte-Zeile ein-/ausklappbar; Einstellung `devices_collapse`: expanded / collapsed / top (nur die größten `devices_top_n` Verbraucher).

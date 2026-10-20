@@ -108,14 +108,15 @@ function startOfToday() {
   return d.getTime();
 }
 
+// perceptual colour difference (CIE76 in CIELAB)
+function toLab(hex) {
+  const [r, g, b] = hex2rgb(hex).map((v) => { v /= 255; return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); });
+  const f = (t) => (t > 0.008856 ? Math.cbrt(t) : 7.787 * t + 16 / 116);
+  const x = f((r * 0.4124 + g * 0.3576 + b * 0.1805) / 0.95047), y = f(r * 0.2126 + g * 0.7152 + b * 0.0722), z = f((r * 0.0193 + g * 0.1192 + b * 0.9505) / 1.08883);
+  return [116 * y - 16, 500 * (x - y), 200 * (y - z)];
+}
 function colorDist(a, b) {
-  try {
-    const x = hex2rgb(a), y = hex2rgb(b);
-    // weighted RGB distance (closer to perceived difference than plain RGB)
-    const rm = (x[0] + y[0]) / 2;
-    const dr = x[0] - y[0], dg = x[1] - y[1], db = x[2] - y[2];
-    return Math.sqrt((2 + rm / 256) * dr * dr + 4 * dg * dg + (2 + (255 - rm) / 256) * db * db);
-  } catch (e) { return 999; }
+  try { const p = toLab(a), q = toLab(b); return Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]); } catch (e) { return 999; }
 }
 function hsl2hex(h, s, l) {
   s /= 100; l /= 100;
@@ -696,25 +697,32 @@ class EnergyFlowPriceCard extends LitElement {
   _devColors() {
     const c = this._config;
     const devs = this._devices();
-    const reserved = [c.color_solar, c.color_grid, c.color_battery, c.color_home].filter((x) => /^#[0-9a-f]{3,6}$/i.test(x || ""));
+    const okHex = (x) => /^#[0-9a-f]{6}$/i.test(x || "");
+    const reserved = [c.color_solar, c.color_grid, c.color_battery, c.color_home].filter(okHex);
     const key = JSON.stringify([devs.map((d) => d.color || ""), c.color_car, reserved]);
     if (this._dcm && this._dcm.key === key) return this._dcm.map;
-    const used = [];
-    const map = devs.map((d) => (d.color ? (used.push(d.color), d.color) : null));
-    const pal = [...new Set([c.color_car || DEVICE_PALETTE[0], ...DEVICE_PALETTE])];
-    const far = (col, list, th) => list.every((u) => colorDist(col, u) >= th);
-    let gi = 0;
+    const used = devs.map((d) => d.color).filter(okHex);
+    const map = devs.map((d) => d.color || null);
+    const cand = [...DEVICE_PALETTE];
+    for (let k = 0; k < 36; k++) cand.push(hsl2hex((k * 137.508) % 360, 75, k % 2 ? 72 : 58));
+    const minDist = (col, list) => list.reduce((m, u) => Math.min(m, colorDist(col, u)), 999);
+    let first = true;
     devs.forEach((d, i) => {
       if (map[i]) return;
-      let col = pal.find((p) => !used.includes(p) && far(p, used, 110) && far(p, reserved, 80))
-        || pal.find((p) => !used.includes(p) && far(p, used, 70));
-      while (!col && gi < 720) {
-        const cand = hsl2hex((gi * 137.508 + 20) % 360, 70 + (gi % 3) * 8, 58 + (gi % 2) * 10);
-        gi++;
-        if (far(cand, used, 60) || gi >= 720) col = cand;
+      let col = null;
+      // the first device keeps the "devices" colour unless it clashes with an own colour
+      if (first && okHex(c.color_car) && minDist(c.color_car, used) > 25) col = c.color_car;
+      first = false;
+      if (!col) {
+        let best = -1;
+        for (const k of cand) {
+          if (used.includes(k)) continue;
+          const score = Math.min(minDist(k, used), minDist(k, reserved) * 1.3);
+          if (score > best) { best = score; col = k; }
+        }
       }
-      map[i] = col;
-      used.push(col);
+      map[i] = col || DEVICE_PALETTE[i % DEVICE_PALETTE.length];
+      used.push(map[i]);
     });
     this._dcm = { key, map };
     return map;
@@ -3101,8 +3109,8 @@ class EnergyFlowPriceCard extends LitElement {
 
 customElements.define("energy-flow-price-card", EnergyFlowPriceCard);
 
-window.__EFPC_VERSION = "1.29.0-fork";
-console.info("%c energy-flow-price-card %c v1.29.0-fork ", "background:#7dd3fc;color:#0a1420;font-weight:700", "background:#333;color:#fff");
+window.__EFPC_VERSION = "1.29.1-fork";
+console.info("%c energy-flow-price-card %c v1.29.1-fork ", "background:#7dd3fc;color:#0a1420;font-weight:700", "background:#333;color:#fff");
 
 window.customCards = window.customCards || [];
 window.customCards.push({

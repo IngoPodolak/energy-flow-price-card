@@ -146,10 +146,14 @@ export const DEVICE_PRESETS = [
 ];
 
 // Colors used for device series in the "devices" chart when a device has no own color.
+// Candidate colours for devices (vivid, readable on dark and light backgrounds). The card
+// picks from these the one that differs most (CIELAB distance) from all colours in use.
 export const DEVICE_PALETTE = [
-  "#a78bfa", "#f472b6", "#38bdf8", "#fb923c", "#34d399", "#facc15", "#e879f9", "#60a5fa",
-  "#f87171", "#2dd4bf", "#a3e635", "#c084fc", "#fbbf24", "#22d3ee", "#fb7185", "#4ade80",
-  "#818cf8", "#f59e0b", "#14b8a6", "#ec4899", "#84cc16", "#06b6d4", "#d946ef", "#94a3b8",
+  "#a78bfa", "#f472b6", "#2dd4bf", "#a3e635", "#fdba74", "#ffffff", "#0e7490", "#7c3aed",
+  "#b45309", "#be123c", "#fda4af", "#4d7c0f", "#60a5fa", "#f59e0b", "#d946ef", "#94a3b8",
+  "#4ade80", "#6366f1", "#fde68a", "#06b6d4", "#38bdf8", "#fb923c", "#facc15", "#f87171",
+  "#c084fc", "#5eead4", "#e879f9", "#bef264", "#93c5fd", "#ef4444", "#10b981", "#8b5cf6",
+  "#ec4899", "#84cc16", "#14b8a6", "#c2410c", "#e2e8f0", "#eab308", "#22d3ee", "#9333ea",
 ];
 
 // Selectable time spans for the history charts (hours; "today" = since midnight).
