@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.31.0-fork
+
+- Verbrauchs-Diagramm: zusätzliche Balken-Ansicht wie im HA-Energie-Dashboard (PV, Akku-Entladung, Netzbezug nach oben; Akku-Aufladung, Einspeisung nach unten), Standard wählbar (`usage_view`).
+
 ## v1.30.2-fork
 
 - Editor: „Effekte reduzieren“ in den allgemeinen Anzeige-Bereich verschoben (gilt für beide Ansichten).

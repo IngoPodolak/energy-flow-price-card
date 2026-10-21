@@ -505,6 +505,12 @@ const TRANSLATIONS = {
     ed_device_colors: "Device colours",
     ed_device_colors_energy: "Same as energy dashboard",
     ed_device_colors_auto: "Automatic (maximum contrast)",
+    pv_direct: "Solar",
+    batt_discharge: "Battery discharge",
+    batt_charge: "Battery charge",
+    ed_usage_view: "Default view of the usage chart",
+    view_usage_line: "Line (power)",
+    view_usage_bars: "Bars (kWh, like energy dashboard)",
   },
   nl: {
     solar: "Solar",
@@ -869,6 +875,12 @@ const TRANSLATIONS = {
     ed_device_colors: "Gerätefarben",
     ed_device_colors_energy: "Wie im Energie-Dashboard",
     ed_device_colors_auto: "Automatisch (maximaler Kontrast)",
+    pv_direct: "PV",
+    batt_discharge: "Akku-Entladung",
+    batt_charge: "Akku-Aufladung",
+    ed_usage_view: "Standard-Ansicht Verbrauchs-Diagramm",
+    view_usage_line: "Linie (Leistung)",
+    view_usage_bars: "Balken (kWh, wie Energie-Dashboard)",
   },
 };
 
@@ -1546,6 +1558,12 @@ class EnergyFlowPriceCardEditor extends LitElement {
 
         <div class="section">
           <div class="head">${T("ed_chart_tabs")}</div>
+          <label class="sel-row">
+            <span>${T("ed_usage_view")}</span>
+            <select @change=${(e) => this._emit({ ...this._config, usage_view: e.target.value })}>
+              ${["line", "bars"].map((v) => html`<option value=${v} ?selected=${(this._config.usage_view ?? "line") === v}>${T("view_usage_" + v)}</option>`)}
+            </select>
+          </label>
           <label class="sel-row">
             <span>${T("ed_devices_view")}</span>
             <select @change=${(e) => this._emit({ ...this._config, devices_view: e.target.value })}>
@@ -3847,6 +3865,8 @@ class EnergyFlowPriceCard extends LitElement {
       entities = [c.battery_soc];
       series = [{ name: T("battery"), color: c.color_battery, entity: c.battery_soc, area: true, live: num(this.hass, c.battery_soc) }];
       opts = { title: T("battery_soc_title"), fixedMax: 100, unit: "%" };
+    } else if (mode === "usage" && (this._useView || c.usage_view || "line") === "bars") {
+      return this._usageBars(c, spec);
     } else if (mode === "usage") {
       entities = [c.solar_power, ...this._src("battery").entities, ...this._src("grid").entities];
       opts = { title: T("usage_title"), signed: true, merged: true };
@@ -3883,7 +3903,7 @@ class EnergyFlowPriceCard extends LitElement {
       series = series.map((s) => (s.forecast ? s : { ...s, points: s.src ? this._srcSeries(s.src, byEntity) : (byEntity[s.entity] || []) }));
     }
 
-    return this._lineChart({ ...opts, series, spec, loading: !data.loaded, error: data.error, toggleKey: mode, headExtra: mode === "devices" ? this._devViewSwitch() : nothing });
+    return this._lineChart({ ...opts, series, spec, loading: !data.loaded, error: data.error, toggleKey: mode, headExtra: mode === "devices" ? this._devViewSwitch() : mode === "usage" ? this._useViewSwitch() : nothing });
   }
 
   // Generic time-series chart (line/area) with a draggable time cursor underneath.
@@ -4060,6 +4080,88 @@ class EnergyFlowPriceCard extends LitElement {
   // ---------------------------------------------------------------------------
   // Devices: alternative views (stacked kWh bars, ranking, donut, energy flow)
   // ---------------------------------------------------------------------------
+  _useViewSwitch() {
+    const cur = this._useView || this._config.usage_view || "line";
+    const views = [["line", "mdi:chart-line"], ["bars", "mdi:chart-bar-stacked"]];
+    return html`<span class="vsw">${views.map(([id, icon]) => html`<button class="vbtn ${id === cur ? "on" : ""}" title=${this._t("view_" + id)}
+      @click=${(e) => { e.stopPropagation(); this._useView = id; this._cursor = null; this._pauseAutoScroll(); this.requestUpdate(); }}><ha-icon icon=${icon}></ha-icon></button>`)}</span>`;
+  }
+
+  // Energy-dashboard style usage bars: per hour/day the consumption by source above zero
+  // (PV used directly, battery discharge, grid import) and battery charge / grid export below.
+  _usageBars(c, spec) {
+    const T = (k) => this._t(k);
+    const lang = resolveLang(c.language, this.hass);
+    const data = this._devEnergy(spec);
+    const head = (extra) => html`<div class="chdr"><span class="t">${T("usage_title")}${this._useViewSwitch()}</span>${extra}</div>`;
+    if (!data || !data.loaded) return html`${head(nothing)}<div class="chart"><div class="plot"><div class="empty">${T("history_loading")}</div></div></div>`;
+    const n = data.buckets.length || 1;
+    const pvDirect = data.buckets.map((_, i) => Math.max(0, data.solar[i] - data.grid.neg[i] - data.batt.neg[i]));
+    const series = [
+      { id: "pv", name: T("pv_direct"), color: c.color_solar, sign: 1, vals: pvDirect },
+      { id: "bout", name: T("batt_discharge"), color: c.color_battery, sign: 1, vals: data.batt.pos },
+      { id: "gin", name: T("grid_import"), color: c.color_grid, sign: 1, vals: data.grid.pos },
+      { id: "bin", name: T("batt_charge"), color: c.color_batt_charge || "#f472b6", sign: -1, vals: data.batt.neg },
+      { id: "gout", name: T("grid_export"), color: (() => { const e = c.color_grid_export || "#22c55e"; return colorDist(e, c.color_battery || "#4caf50") < 35 ? "#8b5cf6" : e; })(), sign: -1, vals: data.grid.neg },
+    ].filter((x) => x.vals.some((v) => v > 0.0005));
+    const hidden = this._hidden?.usagebars || new Set();
+    const toggle = (id) => {
+      this._hidden = this._hidden || {};
+      const set = new Set(this._hidden.usagebars || []);
+      if (set.has(id)) set.delete(id); else set.add(id);
+      this._hidden.usagebars = set;
+      this.requestUpdate();
+    };
+    const vis = series.filter((x) => !hidden.has(x.id));
+    const posSum = data.buckets.map((_, i) => vis.filter((x) => x.sign > 0).reduce((a, x) => a + (x.vals[i] || 0), 0));
+    const negSum = data.buckets.map((_, i) => vis.filter((x) => x.sign < 0).reduce((a, x) => a + (x.vals[i] || 0), 0));
+    let hi = Math.max(0.1, ...posSum), lo = Math.max(0, ...negSum);
+    const pad = (hi + lo) * 0.06; hi += pad; if (lo > 0) lo += pad;
+    const yOf = (v) => ((hi - v) / (hi + lo)) * 100;
+    const y0 = yOf(0);
+    const cur = this._cursor;
+    const bi = cur == null ? null : Math.max(0, Math.min(n - 1, Math.floor(cur * n)));
+    const fmtB = (t) => new Date(t).toLocaleString(lang, data.period === "hour" ? { hour: "2-digit", minute: "2-digit" } : data.period === "day" ? { weekday: "short", day: "numeric", month: "numeric" } : { month: "short", year: "numeric" });
+    const labels = [];
+    const every = Math.max(1, Math.ceil(n / 6));
+    for (let i = 0; i < n; i += every) labels.push({ frac: (i + 0.5) / n, text: data.period === "hour" ? new Date(data.buckets[i].t).getHours() + ":00" : fmtB(data.buckets[i].t) });
+    const ticks = [0, 0.25, 0.5, 0.75, 1].map((f) => hi - f * (hi + lo));
+    const dec = hi + lo < 4 ? 1 : 0;
+    const kwh = (x) => `${fmtKWh(x)} kWh`;
+    const total = (x) => x.vals.reduce((a, v) => a + (v || 0), 0);
+    return html`
+      ${head(html`<span class="now ${bi != null ? "sel" : ""}"><ha-icon icon="mdi:clock-outline"></ha-icon><b>${bi != null ? fmtB(data.buckets[bi].t) : (spec.label || T("range_" + spec.id))}</b>${bi != null ? this._resetBtn(() => { this._cursor = null; this.requestUpdate(); }) : nothing}</span>`)}
+      <div class="usage-legend">${series.map((x) => {
+        const off = hidden.has(x.id);
+        const v = bi != null ? (x.vals[bi] || 0) : total(x);
+        return html`<span class="usage-legend-item tog ${off ? "off" : ""}" @click=${() => toggle(x.id)}><i style="background:${x.color}"></i>${x.name} <b style="color:${x.color}">${x.sign < 0 && v > 0 ? "−" : ""}${kwh(v)}</b></span>`;
+      })}</div>
+      <div class="chart">
+        <div class="yaxis">${ticks.map((t) => html`<span>${(Math.abs(t) < 1e-9 ? 0 : t).toFixed(dec).replace(".", ",")}</span>`)}</div>
+        <div class="plot">
+          <svg class="hist" viewBox="0 0 100 100" preserveAspectRatio="none">
+            <line x1="0" y1="${y0}" x2="100" y2="${y0}" stroke="var(--divider-color, rgba(255,255,255,.25))" stroke-width="1" vector-effect="non-scaling-stroke"></line>
+            ${data.buckets.map((b, i) => {
+              const w = 100 / n, x0 = i * w + w * 0.14, bw = w * 0.72;
+              const on = bi == null || bi === i;
+              let up = 0, down = 0;
+              return svg`${vis.map((x) => {
+                const v = x.vals[i] || 0;
+                if (v <= 0) return nothing;
+                let ya, yb;
+                if (x.sign > 0) { ya = yOf(up + v); yb = yOf(up); up += v; } else { ya = yOf(-down); yb = yOf(-(down + v)); down += v; }
+                return svg`<rect x="${x0}" y="${ya}" width="${bw}" height="${Math.max(0.2, yb - ya)}" fill="${x.color}" fill-opacity="${on ? 0.45 : 0.15}"
+                  stroke="${x.color}" stroke-opacity="${on ? 1 : 0.4}" stroke-width="1" vector-effect="non-scaling-stroke"></rect>`;
+              })}`;
+            })}
+          </svg>
+          ${bi != null ? html`<div class="cursor" style="left:${((bi + 0.5) / n) * 100}%"></div>` : nothing}
+        </div>
+        <div class="xaxis">${labels.map((l) => html`<span class="tick" style="left:${l.frac * 100}%">${l.text}</span>`)}</div>
+      </div>
+      ${this._scrubber(cur == null ? 1 : cur, (f) => { this._cursor = f >= 0.999 ? null : f; this.requestUpdate(); })}`;
+  }
+
   _devViewSwitch() {
     const cur = this._devView || this._config.devices_view || "line";
     const views = [["line", "mdi:chart-line"], ["bars", "mdi:chart-bar-stacked"], ["rank", "mdi:format-list-bulleted-square"], ["donut", "mdi:chart-donut"], ["sankey", "mdi:chart-sankey"]];
@@ -4867,8 +4969,8 @@ class EnergyFlowPriceCard extends LitElement {
 
 customElements.define("energy-flow-price-card", EnergyFlowPriceCard);
 
-window.__EFPC_VERSION = "1.30.2-fork";
-console.info("%c energy-flow-price-card %c v1.30.2-fork ", "background:#7dd3fc;color:#0a1420;font-weight:700", "background:#333;color:#fff");
+window.__EFPC_VERSION = "1.31.0-fork";
+console.info("%c energy-flow-price-card %c v1.31.0-fork ", "background:#7dd3fc;color:#0a1420;font-weight:700", "background:#333;color:#fff");
 
 window.customCards = window.customCards || [];
 window.customCards.push({

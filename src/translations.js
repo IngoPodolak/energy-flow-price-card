@@ -268,6 +268,12 @@ const TRANSLATIONS = {
     ed_device_colors: "Device colours",
     ed_device_colors_energy: "Same as energy dashboard",
     ed_device_colors_auto: "Automatic (maximum contrast)",
+    pv_direct: "Solar",
+    batt_discharge: "Battery discharge",
+    batt_charge: "Battery charge",
+    ed_usage_view: "Default view of the usage chart",
+    view_usage_line: "Line (power)",
+    view_usage_bars: "Bars (kWh, like energy dashboard)",
   },
   nl: {
     solar: "Solar",
@@ -632,6 +638,12 @@ const TRANSLATIONS = {
     ed_device_colors: "Gerätefarben",
     ed_device_colors_energy: "Wie im Energie-Dashboard",
     ed_device_colors_auto: "Automatisch (maximaler Kontrast)",
+    pv_direct: "PV",
+    batt_discharge: "Akku-Entladung",
+    batt_charge: "Akku-Aufladung",
+    ed_usage_view: "Standard-Ansicht Verbrauchs-Diagramm",
+    view_usage_line: "Linie (Leistung)",
+    view_usage_bars: "Balken (kWh, wie Energie-Dashboard)",
   },
 };
 

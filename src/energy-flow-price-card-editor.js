@@ -655,6 +655,12 @@ class EnergyFlowPriceCardEditor extends LitElement {
         <div class="section">
           <div class="head">${T("ed_chart_tabs")}</div>
           <label class="sel-row">
+            <span>${T("ed_usage_view")}</span>
+            <select @change=${(e) => this._emit({ ...this._config, usage_view: e.target.value })}>
+              ${["line", "bars"].map((v) => html`<option value=${v} ?selected=${(this._config.usage_view ?? "line") === v}>${T("view_usage_" + v)}</option>`)}
+            </select>
+          </label>
+          <label class="sel-row">
             <span>${T("ed_devices_view")}</span>
             <select @change=${(e) => this._emit({ ...this._config, devices_view: e.target.value })}>
               ${["line", "bars", "rank", "donut", "sankey"].map((v) => html`<option value=${v} ?selected=${(this._config.devices_view ?? "line") === v}>${T("view_" + v)}</option>`)}
